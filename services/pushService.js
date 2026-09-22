@@ -1,0 +1,247 @@
+/**
+ * إرسال إشعارات FCM لأجهزة الإدارة.
+ *
+ * لا يعمل إلا عند ضبط بيانات اعتماد Firebase في متغيّرات البيئة.
+ * إن لم تُضبط، تُسجَّل رسالة في السجلات ولا يتعطّل أي شيء
+ * (إنشاء الطلبات يستمر طبيعياً — الإشعار إضافة لا شرط).
+ *
+ * المتغيّرات المطلوبة في Railway:
+ *   FIREBASE_PROJECT_ID
+ *   FIREBASE_CLIENT_EMAIL
+ *   FIREBASE_PRIVATE_KEY   (مع \n داخل النص)
+ */
+
+let admin = null;
+let initialized = false;
+let initFailed = false;
+
+const initFirebase = () => {
+  if (initialized || initFailed) return admin;
+
+  const projectId = process.env.FIREBASE_PROJECT_ID;
+  const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
+  let privateKey = process.env.FIREBASE_PRIVATE_KEY;
+
+  if (!projectId || !clientEmail || !privateKey) {
+    console.log('ℹ️ إشعارات FCM غير مفعّلة (متغيّرات Firebase غير مضبوطة).');
+    initFailed = true;
+    return null;
+  }
+
+  try {
+    // Railway يحفظ \n كنص — نعيدها أسطراً حقيقية
+    privateKey = privateKey.replace(/\\n/g, '\n');
+
+    admin = require('firebase-admin');
+    if (!admin.apps.length) {
+      admin.initializeApp({
+        credential: admin.credential.cert({ projectId, clientEmail, privateKey }),
+      });
+    }
+    initialized = true;
+    console.log('✅ Firebase Admin جاهز — إشعارات FCM مفعّلة.');
+    return admin;
+  } catch (err) {
+    console.error('⚠️ تعذّر تهيئة Firebase Admin:', err.message);
+    initFailed = true;
+    return null;
+  }
+};
+
+const isEnabled = () => {
+  initFirebase();
+  return initialized;
+};
+
+/**
+ * إرسال إشعار لمجموعة رموز أجهزة.
+ * @returns {Promise<{sent:number, failed:number, invalidTokens:string[]}>}
+ */
+/**
+ * هل فشل الإرسال لأن الجهاز نفسه ميت؟ فقط هذان الرمزان يعنيان ذلك.
+ * سابقاً كان invalid-argument يُعدّ جهازاً ميتاً — لكنه يخص محتوى الإشعار
+ * غالباً (رابط بلا https مثلاً)، فيفشل لكل الأجهزة معاً فتُعطَّل كلها.
+ */
+const isDeadToken = (code) =>
+  code === 'messaging/registration-token-not-registered' ||
+  code === 'messaging/invalid-registration-token';
+
+/**
+ * يحوّل الرابط إلى https كامل، أو يعيد '' إن تعذّر.
+ * «diyaralanbat.com» ← «https://diyaralanbat.com» — FCM يرفض غير https.
+ */
+const toHttpsUrl = (value) => {
+  let v = String(value || '').trim();
+  if (!v || v.startsWith('/')) return '';
+  if (/^http:\/\//i.test(v)) v = 'https://' + v.slice(7);
+  if (!/^https:\/\//i.test(v)) v = 'https://' + v;
+  try {
+    const u = new URL(v);
+    return u.protocol === 'https:' && u.hostname.includes('.') ? u.href : '';
+  } catch (_) {
+    return '';
+  }
+};
+
+const sendToTokens = async (tokens, { title, body, data = {} }) => {
+  const fb = initFirebase();
+  if (!fb || !tokens.length) return { sent: 0, failed: 0, invalidTokens: [] };
+
+  const message = {
+    notification: { title, body },
+    data: Object.fromEntries(Object.entries(data).map(([k, v]) => [k, String(v)])),
+    android: {
+      priority: 'high',
+      notification: { channelId: 'orders_channel', sound: 'default' },
+    },
+    apns: {
+      payload: { aps: { sound: 'default', badge: 1 } },
+    },
+  };
+
+  try {
+    const res = await fb.messaging().sendEachForMulticast({ ...message, tokens });
+    const invalidTokens = [];
+    res.responses.forEach((r, i) => {
+      if (!r.success) {
+        if (isDeadToken(r.error?.code || '')) invalidTokens.push(tokens[i]);
+      }
+    });
+    return { sent: res.successCount, failed: res.failureCount, invalidTokens };
+  } catch (err) {
+    console.error('sendToTokens error:', err.message);
+    return { sent: 0, failed: tokens.length, invalidTokens: [] };
+  }
+};
+
+/**
+ * إشعار بطلب جديد — يُرسَل فقط لأصحاب صلاحية مشاهدة الطلبات.
+ * الأدوار المسموح لها: admin, manager, cashier, employee (كلها ترى الطلبات).
+ */
+const notifyNewOrder = async (order) => {
+  if (!isEnabled()) return;
+
+  try {
+    const Device = require('../models/Device');
+    const User = require('../models/User');
+
+    // من يملك صلاحية مشاهدة الطلبات فقط
+    const allowedRoles = ['admin', 'manager', 'cashier', 'employee'];
+    const users = await User.find({ role: { $in: allowedRoles }, isActive: true }).select('_id');
+    const userIds = users.map((u) => u._id);
+
+    const devices = await Device.find({ user: { $in: userIds }, isActive: true }).select('fcmToken');
+    const tokens = [...new Set(devices.map((d) => d.fcmToken).filter(Boolean))];
+    if (!tokens.length) return;
+
+    const isDelivery = (order.orderType || 'delivery') !== 'pickup';
+    const title = isDelivery ? '🚗 طلب توصيل جديد' : '🏪 طلب استلام جديد';
+    const body = `الطلب #${order.orderNumber} — الإجمالي: ${Number(order.total || 0).toFixed(2)} د.أ`;
+
+    const result = await sendToTokens(tokens, {
+      title,
+      body,
+      data: {
+        type: 'order.created',
+        orderId: String(order._id),
+        orderNumber: order.orderNumber,
+        orderType: order.orderType || 'delivery',
+        total: order.total,
+      },
+    });
+
+    // تنظيف الرموز غير الصالحة
+    if (result.invalidTokens.length) {
+      await Device.updateMany(
+        { fcmToken: { $in: result.invalidTokens } },
+        { $set: { isActive: false } }
+      );
+    }
+    console.log(`🔔 إشعار الطلب #${order.orderNumber}: أُرسل ${result.sent} / فشل ${result.failed}`);
+  } catch (err) {
+    console.error('notifyNewOrder error:', err.message);
+  }
+};
+
+/* ═══════════════════════════════════════════════════════════════
+   إشعارات الزبائن — العروض والمناسبات (تُكتب يدوياً من لوحة التحكم)
+   ═══════════════════════════════════════════════════════════════ */
+
+/**
+ * إرسال إشعار لكل أجهزة الزبائن المشتركة.
+ * نرسل على دفعات لأن FCM يقبل 500 رمز في الطلب الواحد.
+ * الرموز الميتة تُعطَّل تلقائياً فلا تتراكم.
+ */
+const notifyCustomers = async ({ title, body, link = '', image = '' }) => {
+  const fb = initFirebase();
+  if (!fb) {
+    return { sent: 0, failed: 0, error: 'إشعارات FCM غير مفعّلة — اضبط متغيّرات Firebase في Railway' };
+  }
+
+  const PushSubscriber = require('../models/PushSubscriber');
+  const subs = await PushSubscriber.find({ isActive: true }).select('token');
+  const tokens = [...new Set(subs.map((s) => s.token).filter(Boolean))];
+
+  if (!tokens.length) {
+    return { sent: 0, failed: 0, error: 'لا يوجد زبائن مشتركون في الإشعارات بعد' };
+  }
+
+  let sent = 0;
+  let failed = 0;
+  const invalidTokens = [];
+  const errorCodes = {};
+
+  // رابط وصورة صالحان لـ FCM فقط؛ غير الصالح يُحذف من الإشعار بدل أن يُفشله
+  const safeLink = toHttpsUrl(link);
+  const safeImage = toHttpsUrl(image);
+
+  // دفعات من 500 — حدّ FCM
+  for (let i = 0; i < tokens.length; i += 500) {
+    const batch = tokens.slice(i, i + 500);
+
+    const message = {
+      notification: { title, body, ...(safeImage ? { imageUrl: safeImage } : {}) },
+      data: { link: safeLink || String(link || ''), kind: 'promo' },
+      android: { priority: 'high', notification: { channelId: 'promo_channel', sound: 'default' } },
+      apns: { payload: { aps: { sound: 'default' } } },
+      // مهم للويب: الرابط الذي يُفتح عند النقر على الإشعار
+      webpush: {
+        notification: { title, body, ...(safeImage ? { image: safeImage } : {}) },
+        fcmOptions: safeLink ? { link: safeLink } : undefined,
+      },
+    };
+
+    try {
+      const res = await fb.messaging().sendEachForMulticast({ ...message, tokens: batch });
+      sent += res.successCount;
+      failed += res.failureCount;
+      res.responses.forEach((r, idx) => {
+        if (!r.success) {
+          const code = (r.error && r.error.code) || 'unknown';
+          errorCodes[code] = (errorCodes[code] || 0) + 1;
+          if (isDeadToken(code)) invalidTokens.push(batch[idx]);
+        }
+      });
+    } catch (err) {
+      console.error('notifyCustomers batch error:', err.message);
+      failed += batch.length;
+    }
+  }
+
+  if (invalidTokens.length) {
+    await PushSubscriber.updateMany({ token: { $in: invalidTokens } }, { $set: { isActive: false } });
+    console.log(`🧹 تعطيل ${invalidTokens.length} رمز زبون غير صالح`);
+  }
+
+  console.log(`📣 إشعار الزبائن "${title}": أُرسل ${sent} / فشل ${failed} من أصل ${tokens.length}`, errorCodes);
+
+  // فشل الكل بغير «جهاز ميت» = مشكلة في الإشعار نفسه لا في الأجهزة
+  const top = Object.entries(errorCodes).sort((a, b) => b[1] - a[1])[0];
+  const error = !sent && failed && top && !isDeadToken(top[0])
+    ? `رفض Firebase الإشعار (${top[0]}) — الأجهزة لم تُعطَّل؛ راجع الرابط والصورة`
+    : '';
+  return { sent, failed, error };
+};
+
+module.exports = { isEnabled, sendToTokens, notifyNewOrder, notifyCustomers, toHttpsUrl, isDeadToken };
+
