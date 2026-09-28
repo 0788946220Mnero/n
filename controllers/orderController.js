@@ -445,11 +445,11 @@ const getDashboardStats = async (req, res) => {
     Order.countDocuments({ status: 'pending' }),
     Order.aggregate([
       { $match: { createdAt: { $gte: startOfDay }, ...confirmedFilter } },
-      { $group: { _id: null, total: { $sum: '$total' } } },
+      { $group: { _id: null, total: { $sum: { $subtract: ['$total', { $ifNull: ['$deliveryFee', 0] }] } } } }, // بلا رسوم التوصيل
     ]),
     Order.aggregate([
       { $match: { createdAt: { $gte: startOfMonth }, ...confirmedFilter } },
-      { $group: { _id: null, total: { $sum: '$total' } } },
+      { $group: { _id: null, total: { $sum: { $subtract: ['$total', { $ifNull: ['$deliveryFee', 0] }] } } } }, // بلا رسوم التوصيل
     ]),
     Order.find().sort('-createdAt').limit(5),
     Order.aggregate([
@@ -681,11 +681,15 @@ const unblockPhone = async (req, res) => {
  * المؤكَّدة كلها تسقط في «المعلّقة» ويظهر جرد المنصة صفراً دائماً.
  * المعلّق = طلب منصة لم يؤكده أحد بعد (pending) فقط.
  */
-const summarizeOrders = (orders, expenses = []) => {
+/** قيمة البيع الفعلية للمطعم: الإجمالي ناقص رسوم التوصيل. */
+const salesValue = (o) => Math.max(0, Number(o.total || 0) - Number(o.deliveryFee || 0));
+
+const summarizeOrders = (orders, expenses = [], delivery = null) => {
   const isPos = (o) => o.source === 'pos';
   const isSuccess = (o) => o.status !== 'pending' && o.status !== 'cancelled';
   // 3 منازل: الدينار ألف فلس، والتقريب لمنزلتين يُفسد مطابقة نقد الصندوق
-  const sum = (arr) => Number(arr.reduce((t, o) => t + Number(o.total || 0), 0).toFixed(3));
+  // كل الأرقام بقيمة الأصناف فقط: رسوم التوصيل ليست مبيعات المطعم
+  const sum = (arr) => Number(arr.reduce((t, o) => t + salesValue(o), 0).toFixed(3));
 
   const cancelled = orders.filter((o) => o.status === 'cancelled');
   const success = orders.filter(isSuccess);
@@ -694,10 +698,10 @@ const summarizeOrders = (orders, expenses = []) => {
   const platform = success.filter((o) => !isPos(o));
   const direct = success.filter(isPos);
 
-  // التوصيل المحصَّل فعلاً: من طلبات المنصة المُسلَّمة فقط
-  const deliveryTotal = Number(
-    platform.reduce((t, o) => t + Number(o.deliveryFee || 0), 0).toFixed(3)
-  );
+  // التوصيل خارج هذا الملخص كلياً — يُضاف من دفتر التوصيل لجرد الأدمن فقط
+  const deliveryTotal = delivery
+    ? Number(delivery.reduce((t, o) => t + Number(o.deliveryFee || 0), 0).toFixed(3))
+    : 0;
 
   // المصروفات: الملغى يبقى أثراً للمراجعة لكنه خارج الحساب
   const liveExpenses = expenses.filter((e) => !e.voided);
@@ -713,6 +717,9 @@ const summarizeOrders = (orders, expenses = []) => {
     platformTotal: sum(platform),
     directCount: direct.length,
     directTotal: sum(direct),
+    // دفتر التوصيل (null لغير الأدمن): مستحقات المندوبين، خارج المبيعات والصندوق
+    deliveryIncluded: !!delivery,
+    deliveryCount: delivery ? delivery.length : 0,
     deliveryTotal,
     pendingCount: pendingList.length,
     pendingTotal: sum(pendingList),
@@ -721,6 +728,7 @@ const summarizeOrders = (orders, expenses = []) => {
     expensesCount: liveExpenses.length,
     expensesTotal,
     // ما يجب أن يكون في الصندوق: المبيعات المحققة ناقص ما صُرف منها
+    // (التوصيل لا يدخل: المندوب يحصّله من الزبون ويحتفظ به)
     cashNet: Number((sum(success) - expensesTotal).toFixed(3)),
     firstAt: times.length ? new Date(Math.min(...times)) : null,
     generatedAt: new Date(),
@@ -755,17 +763,43 @@ const shiftFilter = (user, scope, brand) => {
   return f;
 };
 
+/**
+ * دفتر التوصيل — للأدمن وحده، وفي «جرد المطعم كاملاً» فقط.
+ * كل طلب منصة مؤكَّد برسوم توصيل ولم تُسوَّ رسومه بعد، سواء أُغلق في جرد
+ * كاشير أو مدير أم لا — فلا تضيع رسوم ولا تُحسب مرتين.
+ * يبدأ الدفتر من DELIVERY_LEDGER_START: الطلبات الأقدم دخل توصيلها جرودها القديمة.
+ */
+const DELIVERY_LEDGER_START = new Date(process.env.DELIVERY_LEDGER_START || '2026-09-28T00:00:00+03:00');
+
+const canSettleDelivery = (user, scope) => scope === 'all' && !!user && user.role === 'admin';
+
+const deliveryLedgerFilter = (brand) => {
+  const f = {
+    source: { $ne: 'pos' },
+    status: { $nin: ['pending', 'cancelled'] },
+    deliveryFee: { $gt: 0 },
+    deliverySettled: { $ne: true },
+    confirmedAt: { $gte: DELIVERY_LEDGER_START },
+  };
+  if (brand) f.brand = brand;
+  return f;
+};
+
+const loadDeliveryLedger = (user, scope, brand) =>
+  canSettleDelivery(user, scope) ? Order.find(deliveryLedgerFilter(brand)).lean() : Promise.resolve(null);
+
 const resolveScope = (user, requested) => (requested === 'all' && canCloseAll(user) ? 'all' : 'mine');
 
 // GET /api/orders/shift-summary?scope=mine|all — معاينة الجرد قبل الإغلاق (لا تُغيّر شيئاً)
 const getShiftSummary = async (req, res) => {
   try {
     const scope = resolveScope(req.user, req.query.scope);
-    const [orders, expenses] = await Promise.all([
+    const [orders, expenses, delivery] = await Promise.all([
       Order.find(shiftFilter(req.user, scope, req.query.brand)).lean(),
       Expense.find(expenseFilter(req.user, scope)).lean(),
+      loadDeliveryLedger(req.user, scope, req.query.brand),
     ]);
-    const summary = summarizeOrders(orders, expenses);
+    const summary = summarizeOrders(orders, expenses, delivery);
     res.json({
       success: true,
       summary: { ...summary, scope, userName: scope === 'all' ? 'جرد المطعم كاملاً' : handlerName(req.user) },
@@ -827,15 +861,16 @@ const closeShift = async (req, res) => {
     if (!ok) return res.status(401).json({ message: 'كلمة المرور غير صحيحة' });
 
     const scope = resolveScope(req.user, req.body.scope);
-    const [orders, expenses] = await Promise.all([
+    const [orders, expenses, delivery] = await Promise.all([
       Order.find(shiftFilter(req.user, scope, brand)).lean(),
       Expense.find(expenseFilter(req.user, scope)).lean(),
+      loadDeliveryLedger(req.user, scope, brand),
     ]);
-    if (orders.length === 0 && expenses.length === 0) {
+    if (orders.length === 0 && expenses.length === 0 && !(delivery && delivery.length)) {
       return res.status(400).json({ message: 'لا توجد طلبات ولا مصروفات لإغلاقها حالياً' });
     }
 
-    const summary = summarizeOrders(orders, expenses);
+    const summary = summarizeOrders(orders, expenses, delivery);
     const stamp = new Date().toISOString().replace(/[-:T.]/g, '').slice(0, 14);
     const shiftId = `SHIFT-${stamp}-${scope === 'all' ? 'ALL' : user.username}`;
 
@@ -856,8 +891,16 @@ const closeShift = async (req, res) => {
       );
     }
 
+    // تسوية التوصيل: بالمعرّفات نفسها التي دخلت التقرير
+    if (delivery && delivery.length) {
+      await Order.updateMany(
+        { _id: { $in: delivery.map((o) => o._id) }, deliverySettled: { $ne: true } },
+        { $set: { deliverySettled: true, deliverySettledAt: new Date(), deliveryShiftId: shiftId } }
+      );
+    }
+
     const userName = scope === 'all' ? 'جرد المطعم كاملاً' : handlerName(req.user);
-    console.log(`📊 إغلاق جرد ${shiftId} بواسطة ${user.username} (${scope}) — محقق: ${summary.successCount} (${summary.successTotal}) | معلّقة: ${summary.pendingCount} | ملغاة: ${summary.cancelledCount} | مصروفات: ${summary.expensesTotal}`);
+    console.log(`📊 إغلاق جرد ${shiftId} بواسطة ${user.username} (${scope}) — محقق: ${summary.successCount} (${summary.successTotal}) | معلّقة: ${summary.pendingCount} | ملغاة: ${summary.cancelledCount} | مصروفات: ${summary.expensesTotal} | توصيل للمندوبين: ${summary.deliveryCount} (${summary.deliveryTotal})`);
 
     res.json({
       success: true,
