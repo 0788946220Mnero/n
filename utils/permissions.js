@@ -42,6 +42,7 @@ const ROLE_PERMISSIONS = {
     'printers:manage',
   ],
   employee: ['orders:view', 'products:view'],
+  delivery: [], // حساب محاسبي للمندوب — بلا دخول ولا صلاحيات
 };
 
 // هل يستخدم المستخدم صلاحيات مخصّصة أم يرث صلاحيات دوره؟

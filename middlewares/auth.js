@@ -16,6 +16,10 @@ const protect = async (req, res, next) => {
     if (!user || !user.isActive) {
       return res.status(401).json({ message: 'المستخدم غير موجود أو غير مفعل' });
     }
+    // مستخدم حُوِّل إلى مندوب تسقط جلسته فوراً
+    if (user.role === 'delivery') {
+      return res.status(403).json({ message: 'حساب المندوب للحسابات فقط ولا يدخل لوحة التحكم' });
+    }
 
     /* جلسة واحدة لكل مستخدم. حساب لم يسجّل دخولاً منذ تفعيل الميزة
        (sessionId فارغ) تبقى رموزه القديمة صالحة حتى أول دخول جديد. */

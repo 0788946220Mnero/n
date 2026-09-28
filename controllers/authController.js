@@ -47,6 +47,10 @@ const login = async (req, res) => {
       return res.status(403).json({ message: 'هذا الحساب غير مفعل، تواصل مع الإدارة' });
     }
 
+    if (user.role === 'delivery') {
+      return res.status(403).json({ message: 'حساب المندوب للحسابات فقط ولا يدخل لوحة التحكم' });
+    }
+
     // جلسة جديدة: آخر دخول يفوز، وكل رموز الأجهزة السابقة تسقط
     const sessionId = crypto.randomUUID();
     const accessToken = generateAccessToken(user._id, sessionId);
@@ -374,4 +378,4 @@ const resetPassword = async (req, res) => {
   }
 };
 
-module.exports = wrapAll({ login, refresh, logout, getMe, requestCredentialChange, confirmCredentialChange, changePassword, forgotPassword, resetPassword });
+module.exports = wrapAll({ login, refresh, logout, getMe, requestCredentialChange, confirmCredentialChange, changePassword, forgotPassword, resetPassword });

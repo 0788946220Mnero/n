@@ -76,10 +76,13 @@ const createUser = async (req, res) => {
   try {
     const { name, username, password, role, phone, permissions } = req.body;
 
-    if (!name || !username || !password) {
+    // المندوب لا يسجّل دخولاً: كلمة مرور عشوائية إن لم تُرسل
+    const finalPassword = password || (role === 'delivery' ? require('crypto').randomBytes(12).toString('hex') : '');
+
+    if (!name || !username || !finalPassword) {
       return res.status(400).json({ success: false, message: 'الاسم واسم المستخدم وكلمة المرور مطلوبة' });
     }
-    if (String(password).length < 6) {
+    if (String(finalPassword).length < 6) {
       return res.status(400).json({ success: false, message: 'كلمة المرور يجب أن تكون 6 أحرف على الأقل' });
     }
 
@@ -89,13 +92,13 @@ const createUser = async (req, res) => {
       return res.status(400).json({ success: false, message: 'اسم المستخدم مستخدم بالفعل' });
     }
 
-    const allowedRoles = ['admin', 'manager', 'cashier', 'employee'];
+    const allowedRoles = ['admin', 'manager', 'cashier', 'employee', 'delivery'];
     const finalRole = allowedRoles.includes(role) ? role : 'employee';
 
     const user = await User.create({
       name: String(name).trim(),
       username: cleanUsername,
-      password, // تُجزَّأ تلقائياً عبر pre('save')
+      password: finalPassword, // تُجزَّأ تلقائياً عبر pre('save')
       role: finalRole,
       phone: (phone || '').trim(),
       // مصفوفة فارغة = يرث صلاحيات دوره (هكذا ترسلها لوحة التحكم)
@@ -138,7 +141,7 @@ const updateUser = async (req, res) => {
     }
     if (name) user.name = String(name).trim();
     if (phone != null) user.phone = String(phone).trim();
-    if (role && ['admin', 'manager', 'cashier', 'employee'].includes(role)) user.role = role;
+    if (role && ['admin', 'manager', 'cashier', 'employee', 'delivery'].includes(role)) user.role = role;
     if (typeof isActive === 'boolean') user.isActive = isActive;
     // ✅ تحديث الصلاحيات (كانت تُهمَل تماماً فلا تُحفَظ أي صلاحية مخصّصة)
     if (permissions !== undefined) {

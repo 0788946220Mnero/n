@@ -66,6 +66,10 @@ const orderSchema = new mongoose.Schema(
     // دفتر التوصيل: رسوم التوصيل أمانة للمندوبين المستقلين، لا تدخل جرد أي مستخدم.
     // تُسوّى مرة واحدة في «جرد المطعم كاملاً» للأدمن فقط — مستقلة عن أرشفة الطلب نفسه.
     deliverySettled: { type: Boolean, default: false, index: true },
+    // المندوب الذي خرج بالطلب (مستخدم بدور delivery)
+    driver: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null, index: true },
+    driverName: { type: String, default: '' },
+    driverAssignedAt: { type: Date, default: null },
     deliverySettledAt: { type: Date, default: null },
     deliveryShiftId: { type: String, default: '' },
     printRequested: { type: Boolean, default: false },

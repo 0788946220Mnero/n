@@ -18,6 +18,8 @@ const {
   getShiftSummary,
   getShiftOverview,
   closeShift,
+  getDrivers,
+  assignDriver,
 } = require('../controllers/orderController');
 
 // برنامج الطابعة المحلي (بطاقة طباعة، لا JWT)
@@ -37,11 +39,14 @@ router.get('/shift-summary', protect, getShiftSummary);
 router.get('/shift-overview', protect, authorize('admin', 'manager'), getShiftOverview);
 router.post('/close-shift', protect, authorize('admin', 'manager', 'cashier'), closeShift);
 
+// المندوبون: القائمة قبل /:id حتى لا تُفسَّر «drivers» معرّفاً
+router.get('/drivers', protect, getDrivers);
 router.get('/stats/dashboard', protect, getDashboardStats);
 router.get('/', protect, getOrders);
 router.get('/:id', protect, getOrder);
 router.post('/', createOrder); // يمكن إنشاؤه من الموقع العام بدون توكن — يُنشأ دائماً بحالة "معلّق"
 router.put('/:id/confirm', protect, authorize('admin', 'manager', 'cashier'), confirmOrder);
 router.put('/:id/status', protect, authorize('admin', 'manager', 'cashier'), updateOrderStatus);
+router.put('/:id/driver', protect, authorize('admin', 'manager', 'cashier'), assignDriver);
 
 module.exports = router;

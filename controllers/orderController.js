@@ -427,6 +427,51 @@ const updateOrderStatus = async (req, res) => {
   res.json(order);
 };
 
+// GET /api/orders/drivers — المندوبون المفعّلون (لاختيار من خرج بالطلب)
+const getDrivers = async (req, res) => {
+  const User = require('../models/User');
+  const drivers = await User.find({ role: 'delivery', isActive: true }).select('name username phone').sort('name').lean();
+  res.json({ success: true, data: drivers });
+};
+
+// PUT /api/orders/:id/driver  { driverId | null }
+// يسجّل المندوب الذي خرج بالطلب، ويحوّل الطلب إلى «قيد التوصيل» إن لم يخرج بعد.
+const assignDriver = async (req, res) => {
+  const order = await Order.findById(req.params.id);
+  if (!order) return res.status(404).json({ message: 'الطلب غير موجود' });
+  if (order.source === 'pos' || order.orderType === 'pickup') {
+    return res.status(400).json({ message: 'هذا الطلب ليس طلب توصيل' });
+  }
+  if (['pending', 'cancelled'].includes(order.status)) {
+    return res.status(400).json({ message: 'أكّد الطلب أولاً قبل تعيين المندوب' });
+  }
+  if (order.closed || order.deliverySettled) {
+    return res.status(400).json({ message: 'هذا الطلب ضمن جرد مغلق ولا يمكن تغيير مندوبه' });
+  }
+
+  const driverId = req.body && req.body.driverId;
+  if (driverId) {
+    if (!mongoose.Types.ObjectId.isValid(driverId)) return res.status(400).json({ message: 'مندوب غير صالح' });
+    const User = require('../models/User');
+    const driver = await User.findOne({ _id: driverId, role: 'delivery', isActive: true }).select('name').lean();
+    if (!driver) return res.status(400).json({ message: 'المندوب غير موجود أو غير مفعّل' });
+    order.driver = driver._id;
+    order.driverName = driver.name;
+    order.driverAssignedAt = new Date();
+  } else {
+    order.driver = null;
+    order.driverName = '';
+    order.driverAssignedAt = null;
+  }
+
+  const previousStatus = order.status;
+  if (driverId && ['new', 'preparing', 'ready'].includes(order.status)) order.status = 'out_for_delivery';
+  await order.save();
+
+  try { realtime.emitOrderStatusChanged(order, previousStatus); } catch (e) { console.error('realtime emit failed:', e.message); }
+  res.json(order);
+};
+
 // GET /api/orders/stats/dashboard
 const getDashboardStats = async (req, res) => {
   const startOfDay = new Date();
@@ -698,10 +743,31 @@ const summarizeOrders = (orders, expenses = [], delivery = null) => {
   const platform = success.filter((o) => !isPos(o));
   const direct = success.filter(isPos);
 
-  // التوصيل خارج هذا الملخص كلياً — يُضاف من دفتر التوصيل لجرد الأدمن فقط
-  const deliveryTotal = delivery
-    ? Number(delivery.reduce((t, o) => t + Number(o.deliveryFee || 0), 0).toFixed(3))
-    : 0;
+  const fees = (arr) => Number(arr.reduce((t, o) => t + Number(o.deliveryFee || 0), 0).toFixed(3));
+
+  // توصيل طلبات هذا الجرد: يظهر لكل مستخدم للعلم فقط، ولا يدخل أي مجموع
+  const withFee = platform.filter((o) => Number(o.deliveryFee || 0) > 0);
+
+  // دفتر التوصيل (الأدمن): مستحقات المندوبين، مفصّلة لكل مندوب
+  const deliveryTotal = delivery ? fees(delivery) : 0;
+  let deliveryByDriver = [];
+  if (delivery) {
+    const groups = new Map();
+    for (const o of delivery) {
+      const key = o.driver ? String(o.driver) : '';
+      if (!groups.has(key)) groups.set(key, { driverId: key || null, name: key ? o.driverName || 'مندوب' : 'بلا مندوب', list: [] });
+      groups.get(key).list.push(o);
+    }
+    deliveryByDriver = [...groups.values()]
+      .map((g) => ({
+        driverId: g.driverId,
+        name: g.name,
+        count: g.list.length,
+        salesTotal: sum(g.list),       // قيمة الأصناف: يسلّمها المندوب للمطعم
+        deliveryTotal: fees(g.list),   // أجرة المندوب
+      }))
+      .sort((a, b) => (a.driverId ? 0 : 1) - (b.driverId ? 0 : 1) || b.count - a.count);
+  }
 
   // المصروفات: الملغى يبقى أثراً للمراجعة لكنه خارج الحساب
   const liveExpenses = expenses.filter((e) => !e.voided);
@@ -718,9 +784,12 @@ const summarizeOrders = (orders, expenses = [], delivery = null) => {
     directCount: direct.length,
     directTotal: sum(direct),
     // دفتر التوصيل (null لغير الأدمن): مستحقات المندوبين، خارج المبيعات والصندوق
+    deliveryInfoCount: withFee.length,
+    deliveryInfoTotal: fees(withFee),
     deliveryIncluded: !!delivery,
     deliveryCount: delivery ? delivery.length : 0,
     deliveryTotal,
+    deliveryByDriver,
     pendingCount: pendingList.length,
     pendingTotal: sum(pendingList),
     cancelledCount: cancelled.length,
@@ -916,4 +985,6 @@ const closeShift = async (req, res) => {
 module.exports = wrapAll({
   getShiftSummary,
   getShiftOverview,
+  getDrivers,
+  assignDriver,
   closeShift, getOrders, getOrder, createOrder, confirmOrder, updateOrderStatus, getDashboardStats, getPrintQueue, markPrinted, createPosOrder, getBlockedPhones, blockPhone, unblockPhone });

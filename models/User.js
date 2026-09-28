@@ -10,7 +10,8 @@ const userSchema = new mongoose.Schema(
     phone: { type: String, default: '', trim: true },
     role: {
       type: String,
-      enum: ['admin', 'manager', 'cashier', 'employee'],
+      // delivery: مندوب توصيل مستقل — حساب محاسبي فقط، لا يدخل لوحة التحكم
+      enum: ['admin', 'manager', 'cashier', 'employee', 'delivery'],
       default: 'employee',
     },
     permissions: [{ type: String }], // مثال: ['products:edit', 'orders:view']
