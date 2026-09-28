@@ -50,6 +50,9 @@ const getOrders = async (req, res) => {
   if (req.query.shiftId) filter.shiftId = req.query.shiftId;
   if (req.query.brand) filter.brand = req.query.brand;
   if (req.query.status) filter.status = req.query.status;
+  // مبيعات السفري في شاشة البيع: source=pos، و mine=true لمبيعات المستخدم نفسه
+  if (['web', 'pos', 'app'].includes(req.query.source)) filter.source = req.query.source;
+  if (req.query.mine === 'true' && req.user) filter.handledBy = req.user._id;
   if (req.query.search) {
     filter.$or = [
       { orderNumber: { $regex: req.query.search, $options: 'i' } },
@@ -386,8 +389,13 @@ const updateOrderStatus = async (req, res) => {
   }
 
   // نقرأ الحالة السابقة لإرسالها ضمن الحدث
-  const previous = await Order.findById(req.params.id).select('status');
+  const previous = await Order.findById(req.params.id).select('status closed');
   const previousStatus = previous ? previous.status : null;
+
+  // طلب دخل جرداً مغلقاً لا يُعدَّل: تغييره يُفسد تقريراً طُبع وسُلّم نقده
+  if (previous && previous.closed) {
+    return res.status(400).json({ message: 'هذا الطلب ضمن جرد مغلق ولا يمكن تعديله' });
+  }
 
   /* الإلغاء للمدير وحده — في الاتجاهين: إلغاء طلب، أو إرجاع طلب ملغى.
      بدون الاتجاه الثاني يستطيع غير المدير عكس قرار الإلغاء. */
@@ -667,13 +675,15 @@ const unblockPhone = async (req, res) => {
 /**
  * ملخص الجرد من قائمة طلبات.
  *
- * المحقق: طلب المنصة عند تسليمه، وطلب السفري فور بيعه — لأنه يُنشأ بحالة
- * «جاري التحضير» ودُفع على الكاشير، ولا أحد يعلّمه «تم التسليم». سابقاً كان
- * يُحسب «معلّقاً» فيسقط من صافي المبيعات كلياً.
+ * المحقق: كل طلب مؤكَّد غير ملغى — طلب المنصة لحظة تأكيده من «حالة الطلبات»
+ * (أيّاً كانت حالته بعدها)، وطلب السفري فور بيعه.
+ * سابقاً كان طلب المنصة لا يُحسب إلا بعد «تم التسليم»، فكانت الطلبات
+ * المؤكَّدة كلها تسقط في «المعلّقة» ويظهر جرد المنصة صفراً دائماً.
+ * المعلّق = طلب منصة لم يؤكده أحد بعد (pending) فقط.
  */
 const summarizeOrders = (orders, expenses = []) => {
   const isPos = (o) => o.source === 'pos';
-  const isSuccess = (o) => o.status === 'delivered' || (isPos(o) && o.status !== 'cancelled');
+  const isSuccess = (o) => o.status !== 'pending' && o.status !== 'cancelled';
   // 3 منازل: الدينار ألف فلس، والتقريب لمنزلتين يُفسد مطابقة نقد الصندوق
   const sum = (arr) => Number(arr.reduce((t, o) => t + Number(o.total || 0), 0).toFixed(3));
 
@@ -831,8 +841,10 @@ const closeShift = async (req, res) => {
 
     /* الأرشفة بالمعرّفات نفسها التي حُسب منها الملخص: طلب يصل أثناء
        الإغلاق لا يُؤرشف خارج التقرير، بل يبقى للجرد القادم. */
+    /* الطلب غير المؤكَّد (pending) يظهر في التقرير للعلم لكنه لا يُؤرشف:
+       لو أُرشف لاختفى من «حالة الطلبات» قبل أن يؤكده أحد ويضيع على الزبون. */
     await Order.updateMany(
-      { _id: { $in: orders.map((o) => o._id) }, closed: { $ne: true } },
+      { _id: { $in: orders.filter((o) => o.status !== 'pending').map((o) => o._id) }, closed: { $ne: true } },
       { $set: { closed: true, closedAt: new Date(), shiftId } }
     );
 
