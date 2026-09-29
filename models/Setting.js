@@ -43,6 +43,14 @@ const settingSchema = new mongoose.Schema(
       freeDistanceKm: { type: Number, default: 1 },      // المسافة المجانية
       pricePerKm: { type: Number, default: 0.5 },        // سعر كل كيلومتر إضافي
       maxDistanceKm: { type: Number, default: 10 },      // أقصى مسافة للتوصيل
+      // طريقة الحساب: perKm = مسافة مجانية ثم سعر لكل كم | tiered = شرائح متناقصة
+      pricingMode: { type: String, enum: ['perKm', 'tiered'], default: 'perKm' },
+      // الشرائح: أول tier1Km بسعر ثابت، ثم حتى tier2Km لكل كم، ثم ما بعدها لكل كم
+      tier1Km: { type: Number, default: 2 },
+      tier1Fee: { type: Number, default: 1 },
+      tier2Km: { type: Number, default: 4 },
+      tier2PerKm: { type: Number, default: 0.25 },
+      tier3PerKm: { type: Number, default: 0.15 },
       // 'straight' = مسافة جوية (Haversine) | 'road' = مسافة الطريق (تحتاج Routing API)
       distanceMode: { type: String, enum: ['straight', 'road'], default: 'straight' },
     },

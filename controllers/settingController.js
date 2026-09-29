@@ -429,6 +429,12 @@ const getDeliveryConfig = async (req, res) => {
       freeDistanceKm: Number(d.freeDistanceKm ?? 1),
       pricePerKm: Number(d.pricePerKm ?? 0.5),
       maxDistanceKm: Number(d.maxDistanceKm ?? 10),
+      pricingMode: d.pricingMode || 'perKm',
+      tier1Km: Number(d.tier1Km ?? 2),
+      tier1Fee: Number(d.tier1Fee ?? 1),
+      tier2Km: Number(d.tier2Km ?? 4),
+      tier2PerKm: Number(d.tier2PerKm ?? 0.25),
+      tier3PerKm: Number(d.tier3PerKm ?? 0.15),
     });
   } catch (err) {
     res.status(500).json({ success: false, message: 'تعذّر جلب إعدادات التوصيل' });
