@@ -59,6 +59,9 @@ const orderSchema = new mongoose.Schema(
     posChannel: { type: String, default: '' },
     // معرّف يولّده المتصفح لكل عملية بيع: إعادة الإرسال بنفسه لا تُنشئ طلباً ثانياً
     clientRef: { type: String, default: '', index: true },
+    // بيع تمّ وطُبع على جهاز الكاشير بلا إنترنت ثم زُومن: رقمه المؤقت المطبوع للزبون ووقته الفعلي
+    offlineNumber: { type: String, default: '' },
+    offlineSoldAt: { type: Date, default: null },
     // إغلاق الجرد: تُؤرشف الطلبات بدل حذفها (السجل المالي يبقى محفوظاً دائماً)
     closed: { type: Boolean, default: false, index: true },
     closedAt: { type: Date, default: null },

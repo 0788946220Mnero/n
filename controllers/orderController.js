@@ -58,6 +58,8 @@ const getOrders = async (req, res) => {
       { orderNumber: { $regex: req.query.search, $options: 'i' } },
       { customerName: { $regex: req.query.search, $options: 'i' } },
       { phone: { $regex: req.query.search, $options: 'i' } },
+      // الرقم المؤقت المطبوع على فاتورة بيعٍ تمّ بلا إنترنت
+      { offlineNumber: { $regex: req.query.search, $options: 'i' } },
     ];
   }
 
@@ -558,15 +560,27 @@ const createPosOrder = async (req, res) => {
     const channel = req.body.channel === 'web' ? 'web' : 'app';
     const clientRef = String(req.body.clientRef || '').trim().slice(0, 64);
 
+    // بيع بلا إنترنت من جهاز الكاشير: رقمه المطبوع ووقته الفعلي (ضمن آخر 7 أيام فقط)
+    const offlineNumber = String(req.body.offlineNumber || '').trim().slice(0, 24);
+    let offlineSoldAt = null;
+    if (offlineNumber && req.body.soldAt) {
+      const t = new Date(req.body.soldAt);
+      const now = Date.now();
+      if (!isNaN(t) && t.getTime() <= now + 5 * 60 * 1000 && t.getTime() >= now - 7 * 24 * 60 * 60 * 1000) {
+        offlineSoldAt = t;
+      }
+    }
+
     if (!Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ success: false, message: 'لا توجد أصناف في الطلب' });
     }
 
     /* شبكة الجوال تنقطع وتعود: لو ضاع الرد وأعاد المتصفح الإرسال بنفس
        المعرّف، نعيد الطلب الأول بدل بيعه مرتين. فهرس عادي لا فريد عمداً —
-       الفهارس الفريدة القديمة سبق أن سببت «key مستخدم بالفعل». */
+       الفهارس الفريدة القديمة سبق أن سببت «key مستخدم بالفعل».
+       7 أيام: جهاز الكاشير يزامن مبيعات بلا إنترنت بعد ساعات أو أيام. */
     if (clientRef) {
-      const since = new Date(Date.now() - 30 * 60 * 1000);
+      const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
       const existing = await Order.findOne({ clientRef, createdAt: { $gte: since } });
       if (existing) return res.status(200).json({ success: true, order: existing, duplicate: true });
     }
@@ -641,11 +655,14 @@ const createPosOrder = async (req, res) => {
       printRequested: !!printRequested,
       posChannel: channel,
       clientRef,
+      offlineNumber,
+      offlineSoldAt,
       // البائع يملك الطلب: يدخل في جرده هو
       handledBy: req.user ? req.user._id : null,
       handledByName: handlerName(req.user),
     });
 
+    if (offlineNumber) console.log(`📴 مزامنة بيع بلا إنترنت ${offlineNumber} → ${orderNumber}`);
     console.log(`🧾 بيع مباشر ${orderNumber} بواسطة ${req.user ? req.user.username : 'غير معروف'} — ${total} د.أ`);
 
     try { realtime.emitOrderCreated(order); } catch (e) { console.error('realtime emit failed:', e.message); }
