@@ -1,5 +1,7 @@
 const express = require('express');
 const router = express.Router();
+const { audit } = require('../middlewares/activityLogger');
+
 const upload = require('../middlewares/upload');
 const { protect, authorize } = require('../middlewares/auth');
 const { optimizeImages } = require('../middlewares/imageOptimizer');
@@ -35,7 +37,7 @@ router.post('/delivery-quote', getDeliveryQuote);
 router.patch('/status', protect, authorize('admin', 'manager', 'cashier'), updateRestaurantStatus);
 
 // محمي — لوحة التحكم فقط
-router.put('/', protect, authorize('admin', 'manager'), updateSettings);
+router.put('/', protect, authorize('admin', 'manager'), audit('settings.update', (req) => ({ details: { fields: Object.keys(req.body || {}) } })), updateSettings);
 router.post('/about-image', protect, authorize('admin', 'manager'), upload.single('image'), optimizeImages, uploadAboutImage);
 router.post('/hero-background', protect, authorize('admin', 'manager'), upload.uploadMedia.single('media'), optimizeImages, uploadHeroBackground);
 router.delete('/hero-background', protect, authorize('admin', 'manager'), deleteHeroBackground);

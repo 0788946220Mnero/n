@@ -98,6 +98,10 @@ app.use('/api/devices', require('./routes/deviceRoutes'));
 app.use('/api/expenses', require('./routes/expenseRoutes')); // المصروفات — تدخل جرد من سجّلها
 app.use('/api/print-jobs', require('./routes/printJobRoutes')); // الطباعة عن بُعد على جهاز الكاشير
 app.use('/api/notifications', require('./routes/notificationRoutes')); // إشعارات الزبائن (عروض ومناسبات) // تسجيل أجهزة الإشعارات (FCM)
+app.use('/api/stats', require('./routes/statsRoutes')); // الإحصائيات الحقيقية بالتجميع
+app.use('/api/activity', require('./routes/activityRoutes')); // سجل نشاط المستخدمين
+app.use('/api/shifts', require('./routes/shiftRoutes')); // دورات الجرد: فتح وسجل
+app.use('/api/delivery', require('./routes/deliveryRoutes')); // خريطة التوصيل وسجله وموظفوه
 
 // فحص صحة الخادم — يفيد أيضاً لاختبار CORS من المتصفح
 app.get('/api/health', (req, res) => {

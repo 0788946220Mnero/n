@@ -36,4 +36,21 @@ const protectCustomer = asyncHandler(async (req, res, next) => {
   next();
 });
 
-module.exports = { protectCustomer };
+/** مثل protectCustomer لكن يرفض صراحةً (401) بدل تمرير الطلب لراوتر آخر. */
+const requireCustomer = asyncHandler(async (req, res, next) => {
+  const authHeader = req.headers.authorization || '';
+  if (!authHeader.startsWith('Bearer ')) {
+    return res.status(401).json({ success: false, message: 'سجّل الدخول برقم هاتفك' });
+  }
+  let decoded;
+  try { decoded = jwt.verify(authHeader.split(' ')[1], CUSTOMER_JWT_SECRET()); } catch (_) { decoded = null; }
+  if (!decoded || decoded.type !== 'customer') {
+    return res.status(401).json({ success: false, message: 'سجّل الدخول برقم هاتفك' });
+  }
+  const user = await PhoneUser.findById(decoded.id);
+  if (!user) return res.status(401).json({ success: false, message: 'الحساب غير موجود، الرجاء تسجيل الدخول مجدداً' });
+  req.phoneUser = user;
+  next();
+});
+
+module.exports = { protectCustomer, requireCustomer };

@@ -12,6 +12,30 @@ const pushService = require('../services/pushService');
 const { generateUniqueOrderNumber } = require('../utils/orderNumber');
 const printerService = require('../services/printerService');
 const { extractCoordinates } = require('../utils/coords');
+const crypto = require('crypto');
+const ShiftSession = require('../models/ShiftSession');
+const { logActivity } = require('../utils/activity');
+const { touchOpenSession, ensureOpenSession, newShiftId, numbersFrom } = require('../services/shiftService');
+const { deliveryState, deliveryStateFilter, DELIVERY_BASE } = require('../utils/deliveryState');
+
+/** حدث في تسلسل الطلب (للتتبع وسجل التوصيل) — آخر 40 حدثاً فقط. */
+const timelinePush = (event, user) => ({
+  timeline: { $each: [{ event, at: new Date(), byName: (user && (user.name || user.username)) || '' }], $slice: -40 },
+});
+
+const escRx = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/** 409 موحّد عند التضارب: يعيد الطلب كما هو الآن ليحدّث المستخدم شاشته. */
+const conflict = async (res, id, message) => {
+  const current = await Order.findById(id).lean();
+  if (!current) return res.status(404).json({ success: false, message: 'الطلب غير موجود' });
+  return res.status(409).json({
+    success: false,
+    code: 'CONFLICT',
+    message: message || 'تغيّر هذا الطلب للتو من مستخدم آخر — تم تحديث البيانات، راجعها ثم أعد المحاولة',
+    order: current,
+  });
+};
 
 // رابط خرائط جاهز من الإحداثيات الفعلية — يظهر في لوحة التحكم كحقل locationUrl
 /** اسم المستخدم الظاهر في الجرد والتقارير. */
@@ -53,18 +77,32 @@ const getOrders = async (req, res) => {
   // مبيعات السفري في شاشة البيع: source=pos، و mine=true لمبيعات المستخدم نفسه
   if (['web', 'pos', 'app'].includes(req.query.source)) filter.source = req.query.source;
   if (req.query.mine === 'true' && req.user) filter.handledBy = req.user._id;
+  // سجل الطلبات: فترة، نوع، مندوب، حالة توصيل
+  if (req.query.from || req.query.to) {
+    filter.createdAt = {};
+    if (req.query.from) filter.createdAt.$gte = new Date(`${req.query.from}T00:00:00+03:00`);
+    if (req.query.to) filter.createdAt.$lt = new Date(new Date(`${req.query.to}T00:00:00+03:00`).getTime() + 86400000);
+  }
+  if (['delivery', 'pickup'].includes(req.query.orderType)) filter.orderType = req.query.orderType;
+  if (req.query.driver && mongoose.Types.ObjectId.isValid(req.query.driver)) filter.driver = req.query.driver;
+  const dsf = req.query.deliveryState ? deliveryStateFilter(req.query.deliveryState) : null;
+  if (dsf) { Object.assign(filter, DELIVERY_BASE, dsf); }
   if (req.query.search) {
+    const rx = { $regex: escRx(String(req.query.search).trim()), $options: 'i' };
     filter.$or = [
-      { orderNumber: { $regex: req.query.search, $options: 'i' } },
-      { customerName: { $regex: req.query.search, $options: 'i' } },
-      { phone: { $regex: req.query.search, $options: 'i' } },
+      { orderNumber: rx },
+      { customerName: rx },
+      { phone: rx },
       // الرقم المؤقت المطبوع على فاتورة بيعٍ تمّ بلا إنترنت
-      { offlineNumber: { $regex: req.query.search, $options: 'i' } },
+      { offlineNumber: rx },
+      { driverName: rx },
     ];
   }
+  const SORTS = { '-createdAt': { createdAt: -1 }, createdAt: { createdAt: 1 }, '-total': { total: -1 }, total: { total: 1 } };
+  const sort = SORTS[req.query.sort] || { createdAt: -1 };
 
   const [orders, total] = await Promise.all([
-    Order.find(filter).sort('-createdAt').skip(skip).limit(limit).lean(),
+    Order.find(filter).sort(sort).skip(skip).limit(Math.min(limit, 200)).lean(),
     Order.countDocuments(filter),
   ]);
 
@@ -76,6 +114,7 @@ const getOrders = async (req, res) => {
   orders.forEach((o) => {
     o.phoneVerified = verifiedPhones.has(o.phone);
     o.locationUrl = mapLink(o.customerLatitude, o.customerLongitude);
+    o.deliveryState = o.orderType === 'delivery' && o.source !== 'pos' ? deliveryState(o) : '';
   });
 
   res.json({ data: orders, pagination: { total, page, pages: Math.ceil(total / limit), limit } });
@@ -83,9 +122,11 @@ const getOrders = async (req, res) => {
 
 // GET /api/orders/:id
 const getOrder = async (req, res) => {
+  if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(400).json({ message: 'معرّف غير صالح' });
   const order = await Order.findById(req.params.id).lean();
   if (!order) return res.status(404).json({ message: 'الطلب غير موجود' });
   order.locationUrl = mapLink(order.customerLatitude, order.customerLongitude);
+  order.deliveryState = order.orderType === 'delivery' && order.source !== 'pos' ? deliveryState(order) : '';
   res.json(order);
 };
 
@@ -108,6 +149,23 @@ const createOrder = async (req, res) => {
         code: 'INVALID_PHONE',
         message: 'يرجى إدخال رقم هاتف صحيح مكوّن من 10 أرقام ويبدأ بـ 07.',
       });
+    }
+
+    /* منع الطلب المكرر (ضغط متكرر، إعادة اتصال، إعادة إرسال المتصفح):
+       نفس معرّف العملية خلال 24 ساعة يعيد الطلب الأول ولا يُنشئ ثانياً. */
+    const webClientRef = String(req.body.clientRef || '').trim().slice(0, 64);
+    if (webClientRef) {
+      const dup = await Order.findOne({
+        clientRef: webClientRef,
+        source: { $ne: 'pos' },
+        createdAt: { $gte: new Date(Date.now() - 24 * 60 * 60 * 1000) },
+      }).select('+trackingToken');
+      if (dup) {
+        return res.status(200).json({
+          success: true, duplicate: true, order: dup, orderNumber: dup.orderNumber,
+          orderId: String(dup._id), trackingToken: dup.trackingToken || '',
+        });
+      }
     }
 
     // ✅ نفحص الرقم كما أُرسل وبعد التطبيع معاً، حتى لا يفلت الحظر بسبب فراغ أو شرطة
@@ -163,25 +221,40 @@ const createOrder = async (req, res) => {
       return normalized;
     });
 
-    // نسخ طابعة كل صنف من المنتج (تبقى ثابتة مع الطلب حتى لو تغيّرت لاحقاً)
+    /* نسخ طابعة كل صنف من المنتج (تبقى ثابتة مع الطلب حتى لو تغيّرت لاحقاً)،
+       والسعر من قاعدة البيانات: السعر القادم من الجهاز (سلة قديمة أو «إعادة طلب») ليس نهائياً.
+       الصنف = سعره الحالي + أسعار إضافاته المعرّفة عليه؛ الإضافة غير المعرّفة تبقى كما أُرسلت. */
     try {
       const ids = normalizedItems.map((i) => i.product).filter(Boolean);
       if (ids.length) {
-        const products = await Product.find({ _id: { $in: ids } }).select('printerName').lean();
-        const printerMap = new Map(products.map((p) => [String(p._id), p.printerName || '']));
+        const products = await Product.find({ _id: { $in: ids } }).select('printerName price addons').lean();
+        const byId = new Map(products.map((p) => [String(p._id), p]));
         normalizedItems.forEach((i) => {
-          if (i.product) i.printerName = printerMap.get(String(i.product)) || '';
+          if (!i.product) return;
+          const p = byId.get(String(i.product));
+          if (!p) return;
+          i.printerName = p.printerName || '';
+          if (typeof p.price === 'number') {
+            const known = new Map((p.addons || []).map((a) => [String(a.name || '').trim(), Number(a.price || 0)]));
+            i.addons = (i.addons || []).map((a) => {
+              const k = String((a && a.name) || '').trim();
+              return known.has(k) ? { name: k, price: known.get(k) } : { name: k, price: Number((a && a.price) || 0) };
+            });
+            const addonsTotal = i.addons.reduce((t, a) => t + Number(a.price || 0), 0);
+            i.price = Number((p.price + addonsTotal).toFixed(3));
+          }
         });
       }
     } catch (e) {
-      console.error('تعذّر جلب طابعات الأصناف:', e.message);
+      console.error('تعذّر جلب أسعار/طابعات الأصناف:', e.message);
     }
 
     // ═══ حساب رسوم التوصيل في الخادم (مصدر الحقيقة) ═══
     // نتجاهل أي deliveryFee قادم من الواجهة ونعيد حسابه من الإحداثيات وإعدادات المطعم.
     const isDelivery = (orderType || 'delivery') !== 'pickup';
+    // المجموع يُحسب دائماً من الأصناف بعد تسعيرها في الخادم
     const computedItemsTotal = Number(
-      itemsTotal != null ? itemsTotal : normalizedItems.reduce((t, i) => t + i.price * i.quantity, 0)
+      normalizedItems.reduce((t, i) => t + Number(i.price || 0) * Number(i.quantity || 1), 0).toFixed(3)
     );
 
     let serverDeliveryFee = 0;
@@ -286,6 +359,9 @@ const createOrder = async (req, res) => {
       status: 'pending',
       printRequested: printRequested === true,
       printed: false,
+      clientRef: webClientRef,
+      trackingToken: crypto.randomBytes(16).toString('hex'),
+      timeline: [{ event: 'status:pending', at: new Date(), byName: '' }],
     });
 
     // سجل العميل: إنشاء إن لم يوجد، وتحديث بياناته إن وُجد (بلا تكرار)
@@ -312,7 +388,11 @@ const createOrder = async (req, res) => {
     try { realtime.emitOrderCreated(order); } catch (e) { console.error('realtime emit failed:', e.message); }
     pushService.notifyNewOrder(order).catch((e) => console.error('push failed:', e.message));
 
-    res.status(201).json({ success: true, order, orderNumber });
+    res.status(201).json({
+      success: true, order, orderNumber,
+      // للزبون: متابعة الطلب وسجل طلباته من جهازه
+      orderId: String(order._id), trackingToken: order.trackingToken,
+    });
   } catch (err) {
     res.status(500).json({ success: false, message: 'تعذر إنشاء الطلب', error: err.message });
   }
@@ -325,21 +405,21 @@ const createOrder = async (req, res) => {
 // 3) خصم الكمية من جرد المنتجات (إن كانت مُفعّلة لمنتج معيّن) وزيادة عدّاد الطلبات لكل منتج
 const confirmOrder = async (req, res) => {
   try {
-    const order = await Order.findById(req.params.id);
-    if (!order) return res.status(404).json({ success: false, message: 'الطلب غير موجود' });
-
-    if (order.status !== 'pending') {
-      return res.status(400).json({ success: false, message: 'هذا الطلب مؤكَّد مسبقاً أو ليس بحالة معلّقة' });
+    /* 1) التأكيد ذرّي: الشرط status=pending داخل التحديث نفسه، فلو ضغط مستخدمان
+       «تأكيد» في اللحظة نفسها ينجح واحد فقط، ولا يُحسب العميل والمخزون مرتين. */
+    const order = await Order.findOneAndUpdate(
+      { _id: req.params.id, status: 'pending' },
+      { $set: { status: 'new', confirmedAt: new Date() }, $push: timelinePush('status:new', req.user) },
+      { new: true }
+    );
+    if (!order) {
+      const exists = await Order.exists({ _id: req.params.id });
+      if (!exists) return res.status(404).json({ success: false, message: 'الطلب غير موجود' });
+      return conflict(res, req.params.id, 'هذا الطلب أُكّد مسبقاً (ربما من مستخدم آخر) — تم تحديث البيانات');
     }
-
-    // 1) تحديث حالة الطلب
-    order.status = 'new';
-    order.confirmedAt = new Date();
-    if (!order.handledBy && req.user) {
-      order.handledBy = req.user._id;
-      order.handledByName = handlerName(req.user);
-    }
-    await order.save();
+    await claimHandler(order, req.user);
+    logActivity({ req, action: 'order.confirm', order, before: 'pending', after: 'new' });
+    touchOpenSession(req.user);
 
     // 2) تحديث بيانات العميل — الآن فقط، عند التأكيد
     let customer = await Customer.findOne({ phone: order.phone });
@@ -369,7 +449,8 @@ const confirmOrder = async (req, res) => {
       if (product.stock !== null && product.stock !== undefined) {
         product.stock = Math.max(0, product.stock - item.quantity);
       }
-      await product.save();
+      // نتحقق من الحقول المعدّلة فقط: منتج قديم ناقص حقلاً لا يُفشل تأكيد الطلب
+      await product.save({ validateModifiedOnly: true });
     }
 
     // بثّ تأكيد الطلب لتطبيق الإدارة
@@ -406,17 +487,49 @@ const updateOrderStatus = async (req, res) => {
     return res.status(403).json({ message: 'إلغاء الطلبات للمدير فقط' });
   }
 
+  /* «خرج للتوصيل» لطلب توصيل يتطلب موظف توصيل معيَّناً — حين يكون للمطعم مندوبون.
+     فلا يظهر للزبون «خرج للتوصيل» دون مندوب حقيقي. */
+  if (status === 'out_for_delivery') {
+    const cur = await Order.findById(req.params.id).select('orderType source driver').lean();
+    if (cur && cur.orderType === 'delivery' && cur.source !== 'pos' && !cur.driver) {
+      const User = require('../models/User');
+      if (await User.exists({ role: 'delivery', isActive: true })) {
+        return res.status(400).json({ message: 'عيّن موظف التوصيل أولاً قبل «خرج للتوصيل»' });
+      }
+    }
+  }
+
   const update = { status };
   if (status === 'cancelled') {
     update.cancelledByName = handlerName(req.user);
     update.cancelReason = String((req.body && req.body.reason) || '').trim().slice(0, 200);
     update.cancelledAt = new Date();
   }
+  if (status === 'out_for_delivery') update.outForDeliveryAt = new Date();
+  if (status === 'delivered') update.deliveredAt = new Date();
 
-  const order = await Order.findByIdAndUpdate(req.params.id, update, { new: true });
-  if (!order) return res.status(404).json({ message: 'الطلب غير موجود' });
+  /* منع التضارب: إن أرسلت الواجهة الحالة التي رأتها (expectedStatus) فالتحديث
+     مشروط بها — مستخدمان يغيّران الطلب نفسه معاً: ينجح الأول، ويُبلَّغ الثاني بالحالة الجديدة. */
+  const filter = { _id: req.params.id, closed: { $ne: true } };
+  const expected = req.body && req.body.expectedStatus;
+  if (expected && validStatuses.concat('pending').includes(expected)) filter.status = expected;
+
+  const order = await Order.findOneAndUpdate(
+    filter,
+    { $set: update, $push: timelinePush(`status:${status}`, req.user) },
+    { new: true }
+  );
+  if (!order) {
+    if (!previous) return res.status(404).json({ message: 'الطلب غير موجود' });
+    return conflict(res, req.params.id);
+  }
 
   await claimHandler(order, req.user);
+  logActivity({
+    req, order, before: previousStatus || '', after: status,
+    action: status === 'cancelled' ? 'order.cancel' : status === 'delivered' ? 'order.complete' : 'order.status',
+    details: status === 'cancelled' && update.cancelReason ? { reason: update.cancelReason } : undefined,
+  });
 
   // بثّ فوري لتطبيق الإدارة
   try {
@@ -436,42 +549,151 @@ const getDrivers = async (req, res) => {
   res.json({ success: true, data: drivers });
 };
 
-// PUT /api/orders/:id/driver  { driverId | null }
-// يسجّل المندوب الذي خرج بالطلب، ويحوّل الطلب إلى «قيد التوصيل» إن لم يخرج بعد.
+// PUT /api/orders/:id/driver  { driverId | null, expectedDriver? }
+// يربط الطلب بموظف التوصيل. لا يغيّر حالة الطلب: «تم الإرسال» و«خرج للتوصيل»
+// خطوتان مستقلتان يسجّلهما الخادم حين تحدثان فعلاً.
 const assignDriver = async (req, res) => {
   const order = await Order.findById(req.params.id);
   if (!order) return res.status(404).json({ message: 'الطلب غير موجود' });
   if (order.source === 'pos' || order.orderType === 'pickup') {
     return res.status(400).json({ message: 'هذا الطلب ليس طلب توصيل' });
   }
-  if (['pending', 'cancelled'].includes(order.status)) {
-    return res.status(400).json({ message: 'أكّد الطلب أولاً قبل تعيين المندوب' });
+  if (['pending', 'cancelled', 'delivered'].includes(order.status)) {
+    return res.status(400).json({
+      message: order.status === 'pending' ? 'أكّد الطلب أولاً قبل تعيين المندوب' : 'لا يمكن تغيير مندوب طلب منتهٍ',
+    });
   }
   if (order.closed || order.deliverySettled) {
     return res.status(400).json({ message: 'هذا الطلب ضمن جرد مغلق ولا يمكن تغيير مندوبه' });
   }
 
   const driverId = req.body && req.body.driverId;
+  let set;
   if (driverId) {
     if (!mongoose.Types.ObjectId.isValid(driverId)) return res.status(400).json({ message: 'مندوب غير صالح' });
     const User = require('../models/User');
     const driver = await User.findOne({ _id: driverId, role: 'delivery', isActive: true }).select('name').lean();
     if (!driver) return res.status(400).json({ message: 'المندوب غير موجود أو غير مفعّل' });
-    order.driver = driver._id;
-    order.driverName = driver.name;
-    order.driverAssignedAt = new Date();
+    set = { driver: driver._id, driverName: driver.name, driverAssignedAt: new Date() };
   } else {
-    order.driver = null;
-    order.driverName = '';
-    order.driverAssignedAt = null;
+    set = { driver: null, driverName: '', driverAssignedAt: null };
+  }
+  // تغيّر المندوب = التفاصيل لم تصل للجديد بعد
+  const changed = String(order.driver || '') !== String(set.driver || '');
+  if (changed) { set.deliverySentAt = null; set.deliverySentByName = ''; }
+
+  /* منع التضارب: إن أرسلت الواجهة المندوب الذي رأته (expectedDriver، والفارغ = بلا مندوب)
+     فالتحديث مشروط به — لا يكتب مستخدم فوق تعيين زميله دون أن يعلم. */
+  const filter = { _id: order._id, closed: { $ne: true }, status: { $nin: ['pending', 'cancelled', 'delivered'] } };
+  if (req.body && Object.prototype.hasOwnProperty.call(req.body, 'expectedDriver')) {
+    const exp = req.body.expectedDriver;
+    filter.driver = exp && mongoose.Types.ObjectId.isValid(exp) ? exp : null;
   }
 
-  const previousStatus = order.status;
-  if (driverId && ['new', 'preparing', 'ready'].includes(order.status)) order.status = 'out_for_delivery';
-  await order.save();
+  const updated = await Order.findOneAndUpdate(
+    filter,
+    { $set: set, ...(changed ? { $push: timelinePush(set.driver ? 'driver_assigned' : 'driver_removed', req.user) } : {}) },
+    { new: true }
+  );
+  if (!updated) return conflict(res, order._id, 'تغيّر مندوب هذا الطلب للتو من مستخدم آخر — تم تحديث البيانات');
 
-  try { realtime.emitOrderStatusChanged(order, previousStatus); } catch (e) { console.error('realtime emit failed:', e.message); }
-  res.json(order);
+  if (changed) {
+    logActivity({
+      req, order: updated, action: 'order.assign_driver',
+      before: order.driverName || '', after: updated.driverName || '',
+      details: { driverName: updated.driverName || '', previousDriver: order.driverName || '' },
+    });
+  }
+  try { realtime.emitOrderUpdated(updated); } catch (e) { console.error('realtime emit failed:', e.message); }
+  res.json(updated);
+};
+
+// POST /api/orders/:id/delivery-sent  { driverId }
+// يُسجَّل «تم إرسال تفاصيل الطلب» قبل فتح رسالة المندوب: الخادم يؤكد أولاً،
+// وإن فشل لا تُفتح الرسالة ولا تتغير الحالة.
+const markDeliverySent = async (req, res) => {
+  const driverId = req.body && req.body.driverId;
+  if (!driverId || !mongoose.Types.ObjectId.isValid(driverId)) {
+    return res.status(400).json({ message: 'اختر موظف التوصيل أولاً' });
+  }
+  const now = new Date();
+  const updated = await Order.findOneAndUpdate(
+    {
+      _id: req.params.id,
+      driver: driverId,                 // التفاصيل تُرسل للمندوب المعيَّن فعلاً فقط
+      closed: { $ne: true },
+      status: { $in: ['new', 'preparing', 'ready', 'out_for_delivery'] },
+    },
+    {
+      $set: { deliverySentAt: now, deliverySentByName: handlerName(req.user) },
+      $push: timelinePush('delivery_sent', req.user),
+    },
+    { new: true }
+  );
+  if (!updated) {
+    const cur = await Order.findById(req.params.id).lean();
+    if (!cur) return res.status(404).json({ message: 'الطلب غير موجود' });
+    if (String(cur.driver || '') !== String(driverId)) {
+      return conflict(res, cur._id, 'المندوب المعيَّن لهذا الطلب تغيّر — تم تحديث البيانات');
+    }
+    return res.status(400).json({ message: 'لا يمكن إرسال طلب منتهٍ أو ضمن جرد مغلق' });
+  }
+
+  logActivity({
+    req, order: updated, action: 'order.delivery_sent',
+    details: { driverName: updated.driverName || '' },
+  });
+  try { realtime.emitOrderUpdated(updated); } catch (e) { console.error('realtime emit failed:', e.message); }
+  res.json(updated);
+};
+
+/* ═══════════ تتبع الطلب وسجل الزبون (عام — برمز التتبع) ═══════════ */
+const { publicOrder, tokenMatches } = require('../utils/publicOrder');
+
+// GET /api/orders/track/:id?token=  — حالة طلب واحد للزبون
+const trackOrder = async (req, res) => {
+  const id = req.params.id;
+  if (!mongoose.Types.ObjectId.isValid(id)) return res.status(404).json({ success: false, message: 'الطلب غير موجود' });
+  const order = await Order.findById(id).select('+trackingToken').lean();
+  // رمز خاطئ = «غير موجود»: لا نكشف وجود طلبات الآخرين
+  if (!order || !tokenMatches(order.trackingToken, req.query.token)) {
+    return res.status(404).json({ success: false, message: 'الطلب غير موجود' });
+  }
+  res.json({ success: true, order: publicOrder(order) });
+};
+
+// POST /api/orders/track  { refs: [{ id, token }] } — سجل طلباتي من هذا الجهاز (حتى 50)
+const trackBatch = async (req, res) => {
+  const refs = Array.isArray(req.body && req.body.refs) ? req.body.refs.slice(0, 50) : [];
+  const valid = refs.filter((r) => r && mongoose.Types.ObjectId.isValid(r.id) && typeof r.token === 'string');
+  if (!valid.length) return res.json({ success: true, data: [] });
+  const tokens = new Map();
+  valid.forEach((r) => {
+    const k = String(r.id);
+    if (!tokens.has(k)) tokens.set(k, []);
+    tokens.get(k).push(r.token);
+  });
+  const orders = await Order.find({ _id: { $in: [...tokens.keys()] } }).select('+trackingToken').sort({ createdAt: -1 }).lean();
+  const data = orders
+    .filter((o) => tokens.get(String(o._id)).some((t) => tokenMatches(o.trackingToken, t)))
+    .map(publicOrder);
+  res.json({ success: true, data });
+};
+
+// GET /api/orders/my?page=  — كل طلبات رقم الزبون الموثّق (دخول برقم الهاتف)
+const myOrders = async (req, res) => {
+  const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+  const limit = Math.min(50, Math.max(1, parseInt(req.query.limit, 10) || 20));
+  const intl = String(req.phoneUser.phone || '');           // +9627XXXXXXXX
+  const local = intl.startsWith('+962') ? `0${intl.slice(4)}` : intl; // 07XXXXXXXX
+  const filter = { phone: { $in: [local, intl] }, source: { $ne: 'pos' } };
+  const [orders, total] = await Promise.all([
+    Order.find(filter).select('+trackingToken').sort({ createdAt: -1 }).skip((page - 1) * limit).limit(limit).lean(),
+    Order.countDocuments(filter),
+  ]);
+  // الرمز يُعاد لصاحب الرقم الموثّق فقط، ليتابع الطلب لحظياً
+  const data = orders.map((o) => ({ ...publicOrder(o), token: o.trackingToken || '' }));
+  res.json({ success: true, data, pagination: { page, limit, total, pages: Math.ceil(total / limit) } });
 };
 
 // GET /api/orders/stats/dashboard
@@ -663,6 +885,8 @@ const createPosOrder = async (req, res) => {
     });
 
     if (offlineNumber) console.log(`📴 مزامنة بيع بلا إنترنت ${offlineNumber} → ${orderNumber}`);
+    logActivity({ req, order, action: 'pos.sale', after: order.status, details: offlineNumber ? { offlineNumber } : undefined });
+    touchOpenSession(req.user);
     console.log(`🧾 بيع مباشر ${orderNumber} بواسطة ${req.user ? req.user.username : 'غير معروف'} — ${total} د.أ`);
 
     try { realtime.emitOrderCreated(order); } catch (e) { console.error('realtime emit failed:', e.message); }
@@ -714,6 +938,7 @@ const blockPhone = async (req, res) => {
       { phone, name: name || '', reason: reason || '' },
       { new: true, upsert: true, setDefaultsOnInsert: true }
     );
+    logActivity({ req, action: 'phone.block', details: { phone, reason: reason || '' } });
     res.json({ success: true, blocked });
   } catch (err) {
     res.status(500).json({ success: false, message: 'تعذر حظر الرقم', error: err.message });
@@ -723,6 +948,7 @@ const blockPhone = async (req, res) => {
 const unblockPhone = async (req, res) => {
   try {
     await BlockedPhone.findOneAndDelete({ phone: req.params.phone });
+    logActivity({ req, action: 'phone.unblock', details: { phone: req.params.phone } });
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ success: false, message: 'تعذر رفع الحظر', error: err.message });
@@ -745,6 +971,28 @@ const unblockPhone = async (req, res) => {
  */
 /** قيمة البيع الفعلية للمطعم: الإجمالي ناقص رسوم التوصيل. */
 const salesValue = (o) => Math.max(0, Number(o.total || 0) - Number(o.deliveryFee || 0));
+
+/**
+ * تفصيل المنتجات: كل منتج باسمه (لا التصنيف) — الكمية المباعة وقيمتها، من الطلبات المحققة فقط.
+ * القيمة = سعر السطر (شامل إضافاته) × الكمية، وهو نفس ما دخل المبيعات.
+ */
+const productBreakdown = (orders) => {
+  const map = new Map();
+  for (const o of orders) {
+    for (const it of o.items || []) {
+      const name = String(it.nameAr || it.name || '').trim() || 'صنف';
+      const key = it.product ? `p:${it.product}` : `n:${name}`;
+      if (!map.has(key)) map.set(key, { name, quantity: 0, value: 0 });
+      const row = map.get(key);
+      const qty = Number(it.quantity || 1);
+      row.quantity += qty;
+      row.value += Number(it.price || 0) * qty;
+    }
+  }
+  return [...map.values()]
+    .map((r) => ({ ...r, value: Number(r.value.toFixed(3)) }))
+    .sort((a, b) => b.quantity - a.quantity || b.value - a.value || a.name.localeCompare(b.name, 'ar'));
+};
 
 const summarizeOrders = (orders, expenses = [], delivery = null) => {
   const isPos = (o) => o.source === 'pos';
@@ -796,6 +1044,11 @@ const summarizeOrders = (orders, expenses = [], delivery = null) => {
     totalOrders: orders.length,
     successCount: success.length,
     successTotal: sum(success),
+    // كل منتج باسمه وكميته وقيمته (المحققة فقط)
+    products: productBreakdown(success),
+    // طرق الدفع: النقدي (والقديم بلا طريقة دفع)، وغيره (بطاقة/أونلاين)
+    cashTotal: sum(success.filter((o) => (o.paymentMethod || 'cash') === 'cash')),
+    otherPaymentsTotal: sum(success.filter((o) => (o.paymentMethod || 'cash') !== 'cash')),
     platformCount: platform.length,
     platformTotal: sum(platform),
     directCount: direct.length,
@@ -886,6 +1139,7 @@ const getShiftSummary = async (req, res) => {
       loadDeliveryLedger(req.user, scope, req.query.brand),
     ]);
     const summary = summarizeOrders(orders, expenses, delivery);
+    if (scope === 'all') summary.byUser = userSummaries(orders, expenses);
     res.json({
       success: true,
       summary: { ...summary, scope, userName: scope === 'all' ? 'جرد المطعم كاملاً' : handlerName(req.user) },
@@ -897,32 +1151,49 @@ const getShiftSummary = async (req, res) => {
 };
 
 // GET /api/orders/shift-overview — للمدير: الجرد المفتوح لكل مستخدم على حدة
+/**
+ * جرد كل مستخدم على حدة من طلبات ومصروفات معطاة: من تعامل مع الطلب، ومن سجّل المصروف.
+ * كل عنصر ملخص جرد كامل بصيغة «جرد المستخدم» (مع تفصيل منتجاته) — يُطبع ورقةً مستقلة.
+ */
+const groupByUser = (orders, expenses) => {
+  const groups = new Map();
+  for (const o of orders) {
+    const key = o.handledBy ? String(o.handledBy) : '';
+    if (!groups.has(key)) groups.set(key, { name: o.handledByName || '', orders: [], expenses: [] });
+    groups.get(key).orders.push(o);
+  }
+  for (const e of expenses) {
+    const key = String(e.createdBy);
+    if (!groups.has(key)) groups.set(key, { name: e.createdByName || '', orders: [], expenses: [] });
+    const g = groups.get(key);
+    g.expenses.push(e);
+    if (!g.name) g.name = e.createdByName || '';
+  }
+  return [...groups.entries()].map(([userId, g]) => ({
+    userId: userId || null,
+    name: userId ? g.name || 'مستخدم' : 'بلا مستخدم بعد',
+    orders: g.orders,
+    expenses: g.expenses,
+  }));
+};
+
+/** ملخصات المستخدمين داخل جرد المطعم كاملاً — من له عملية فعلية فقط. */
+const userSummaries = (orders, expenses) =>
+  groupByUser(orders, expenses)
+    .map((g) => ({ userId: g.userId, userName: g.name, scope: 'mine', ...summarizeOrders(g.orders, g.expenses) }))
+    .filter((u) => u.successCount || u.cancelledCount || u.expensesCount)
+    .sort((a, b) => b.successTotal - a.successTotal);
+
 const getShiftOverview = async (req, res) => {
   try {
     const f = { closed: { $ne: true } };
     if (req.query.brand) f.brand = req.query.brand;
     const orders = await Order.find(f).lean();
-
-    const groups = new Map();
-    for (const o of orders) {
-      const key = o.handledBy ? String(o.handledBy) : '';
-      if (!groups.has(key)) groups.set(key, { name: o.handledByName || '', orders: [], expenses: [] });
-      groups.get(key).orders.push(o);
-    }
-
     // مستخدم صرف ولم يبع شيئاً يظهر أيضاً
     const expenses = await Expense.find({ closed: { $ne: true } }).lean();
-    for (const e of expenses) {
-      const key = String(e.createdBy);
-      if (!groups.has(key)) groups.set(key, { name: e.createdByName || '', orders: [], expenses: [] });
-      const g = groups.get(key);
-      g.expenses.push(e);
-      if (!g.name) g.name = e.createdByName || '';
-    }
-
-    const users = [...groups.entries()].map(([userId, g]) => ({
-      userId: userId || null,
-      name: userId ? g.name || 'مستخدم' : 'بلا مستخدم بعد',
+    const users = groupByUser(orders, expenses).map((g) => ({
+      userId: g.userId,
+      name: g.name,
       summary: summarizeOrders(g.orders, g.expenses),
     }));
 
@@ -957,8 +1228,12 @@ const closeShift = async (req, res) => {
     }
 
     const summary = summarizeOrders(orders, expenses, delivery);
-    const stamp = new Date().toISOString().replace(/[-:T.]/g, '').slice(0, 14);
-    const shiftId = `SHIFT-${stamp}-${scope === 'all' ? 'ALL' : user.username}`;
+    // جرد المطعم كاملاً = جرد لكل مستخدم داخله، يُطبع لكلٍّ ورقة مستقلة
+    if (scope === 'all') summary.byUser = userSummaries(orders, expenses);
+    /* الدورة: جرد المستخدم يُغلق دورته المفتوحة (تُفتح الآن إن لم يفتحها)، فيبقى
+       المعرّف نفسه من الفتح إلى الإغلاق. جرد المطعم كاملاً دورة مستقلة. */
+    const openSession = scope === 'all' ? null : await ensureOpenSession(req.user, { auto: true });
+    const shiftId = openSession ? openSession.shiftId : newShiftId(user, 'all');
 
     /* الأرشفة بالمعرّفات نفسها التي حُسب منها الملخص: طلب يصل أثناء
        الإغلاق لا يُؤرشف خارج التقرير، بل يبقى للجرد القادم. */
@@ -986,6 +1261,33 @@ const closeShift = async (req, res) => {
     }
 
     const userName = scope === 'all' ? 'جرد المطعم كاملاً' : handlerName(req.user);
+
+    // حفظ الدورة: من أغلق ومتى، وملخص الأرقام كما طُبع — لا يُمسح بفتح دورة جديدة
+    try {
+      const now = new Date();
+      const closeFields = {
+        status: 'closed', closedAt: now, closedBy: req.user._id, closedByName: handlerName(req.user),
+        periodEnd: now, summary: { ...summary, scope, userName }, ...numbersFrom(summary),
+      };
+      if (openSession) {
+        await ShiftSession.updateOne({ _id: openSession._id }, { $set: closeFields });
+      } else {
+        await ShiftSession.create({
+          shiftId, scope: 'all', user: req.user._id, userName: 'جرد المطعم كاملاً',
+          openedAt: summary.firstAt || now, openedBy: req.user._id, openedByName: handlerName(req.user),
+          ...closeFields,
+        });
+        // جرد المطعم كاملاً أرشف طلبات الجميع: دوراتهم المفتوحة تُغلق معه
+        await ShiftSession.updateMany(
+          { scope: 'mine', status: 'open' },
+          { $set: { status: 'closed', closedAt: now, closedBy: req.user._id, closedByName: handlerName(req.user), closedViaShiftId: shiftId, periodEnd: now } }
+        );
+      }
+    } catch (e) {
+      console.error('حفظ دورة الجرد تعذّر:', e.message); // الإغلاق نفسه تمّ — لا نُفشله
+    }
+    logActivity({ req, action: 'shift.close', amount: summary.successTotal, details: { shiftId, scope, ordersCount: summary.successCount } });
+
     console.log(`📊 إغلاق جرد ${shiftId} بواسطة ${user.username} (${scope}) — محقق: ${summary.successCount} (${summary.successTotal}) | معلّقة: ${summary.pendingCount} | ملغاة: ${summary.cancelledCount} | مصروفات: ${summary.expensesTotal} | توصيل للمندوبين: ${summary.deliveryCount} (${summary.deliveryTotal})`);
 
     res.json({
@@ -1004,4 +1306,8 @@ module.exports = wrapAll({
   getShiftOverview,
   getDrivers,
   assignDriver,
+  markDeliverySent,
+  trackOrder,
+  trackBatch,
+  myOrders,
   closeShift, getOrders, getOrder, createOrder, confirmOrder, updateOrderStatus, getDashboardStats, getPrintQueue, markPrinted, createPosOrder, getBlockedPhones, blockPhone, unblockPhone });

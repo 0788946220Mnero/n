@@ -25,6 +25,9 @@ const PERMISSIONS = [
   { key: 'printers:manage', label: 'إدارة الطابعات والطباعة' },
   { key: 'settings:manage', label: 'إعدادات المطعم والعروض' },
   { key: 'users:manage', label: 'إدارة المستخدمين والصلاحيات' },
+  { key: 'delivery:manage', label: 'نظام التوصيل: الخريطة وتعيين المندوبين وسجل التوصيل' },
+  { key: 'activity:view', label: 'سجل نشاط المستخدمين' },
+  { key: 'shifts:view', label: 'سجل الجرد (كل الدورات)' },
 ];
 
 const ALL_KEYS = PERMISSIONS.map((p) => p.key);
@@ -40,6 +43,7 @@ const ROLE_PERMISSIONS = {
     'customers:view',
     'customers:manage',
     'printers:manage',
+    'delivery:manage', // الكاشير يعيّن المندوب ويرسل الطلب — كما كان يفعل من قائمة الطلبات
   ],
   employee: ['orders:view', 'products:view'],
   delivery: [], // حساب محاسبي للمندوب — بلا دخول ولا صلاحيات

@@ -10,6 +10,8 @@
 const { WebSocketServer } = require('ws');
 const jwt = require('jsonwebtoken');
 const url = require('url');
+const { publicOrder, tokenMatches } = require('../utils/publicOrder');
+const { deliveryState } = require('../utils/deliveryState');
 
 let wss = null;
 const clients = new Set(); // { socket, userId, role }
@@ -37,7 +39,67 @@ const serializeOrder = (order) => ({
       : null,
   createdAt: order.createdAt,
   updatedAt: order.updatedAt,
+  // التوصيل والخريطة: كل ما يلزم لتحديث العلامة واللوحة دون إعادة جلب
+  source: order.source,
+  address: order.address || '',
+  paymentMethod: order.paymentMethod || 'cash',
+  driver: order.driver ? String(order.driver) : null,
+  driverName: order.driverName || '',
+  driverAssignedAt: order.driverAssignedAt || null,
+  deliverySentAt: order.deliverySentAt || null,
+  outForDeliveryAt: order.outForDeliveryAt || null,
+  deliveredAt: order.deliveredAt || null,
+  cancelledAt: order.cancelledAt || null,
+  confirmedAt: order.confirmedAt || null,
+  closed: !!order.closed,
+  deliveryState: order.orderType === 'delivery' && order.source !== 'pos' ? deliveryState(order) : '',
 });
+
+/* ── اشتراكات الزبائن: كل زبون يستقبل تحديثات طلباته فقط (برمز التتبع) ── */
+const trackers = new Set(); // { socket, orderIds: Set<string> }
+
+const emitTracking = (order) => {
+  if (!order || !trackers.size) return;
+  const id = String(order._id);
+  let message = null;
+  trackers.forEach((t) => {
+    if (!t.orderIds.has(id) || t.socket.readyState !== 1) return;
+    if (!message) message = JSON.stringify({ type: 'order.track', order: publicOrder(order) });
+    try { t.socket.send(message); } catch (_) {}
+  });
+};
+
+/** اتصال زبون: ?track=<id>:<token>,<id>:<token> — يُتحقق من كل رمز في القاعدة. */
+const acceptTracker = async (socket, trackParam) => {
+  const pairs = String(trackParam || '')
+    .split(',')
+    .slice(0, 20)
+    .map((p) => p.split(':'))
+    .filter(([id, token]) => id && token && /^[a-f0-9]{24}$/i.test(id));
+  if (!pairs.length) { socket.close(4001, 'track required'); return; }
+
+  let orders = [];
+  try {
+    const Order = require('../models/Order');
+    orders = await Order.find({ _id: { $in: pairs.map(([id]) => id) } }).select('+trackingToken').lean();
+  } catch (_) {
+    socket.close(1011, 'server error');
+    return;
+  }
+  const tokens = new Map(pairs);
+  const allowed = orders.filter((o) => tokenMatches(o.trackingToken, tokens.get(String(o._id))));
+  if (!allowed.length) { socket.close(4002, 'invalid track'); return; }
+  if (socket.readyState !== 1) return;
+
+  const tracker = { socket, orderIds: new Set(allowed.map((o) => String(o._id))) };
+  trackers.add(tracker);
+  // الحالة الحالية فور الاتصال (وبعد كل إعادة اتصال): لا يفوت الزبون تغييراً حدث أثناء الانقطاع
+  socket.send(JSON.stringify({ type: 'track.ready', orders: allowed.map(publicOrder) }));
+  socket.on('close', () => trackers.delete(tracker));
+  socket.on('error', () => trackers.delete(tracker));
+  socket.isAlive = true;
+  socket.on('pong', () => { socket.isAlive = true; });
+};
 
 /** تهيئة الخادم — يُستدعى من server.js بعد إنشاء خادم HTTP. */
 const init = (server) => {
@@ -46,6 +108,13 @@ const init = (server) => {
   wss.on('connection', async (socket, req) => {
     // ── المصادقة: JWT إلزامي ──
     const { query } = url.parse(req.url, true);
+
+    // زبون يتابع طلباته (بلا JWT — برمز تتبع كل طلب)
+    if (query.track && !query.token) {
+      acceptTracker(socket, query.track);
+      return;
+    }
+
     const token = query.token;
 
     if (!token) {
@@ -125,14 +194,16 @@ const broadcast = (type, payload) => {
   });
 };
 
-const emitOrderCreated = (order) => broadcast('order.created', { order: serializeOrder(order) });
-const emitOrderUpdated = (order) => broadcast('order.updated', { order: serializeOrder(order) });
-const emitOrderStatusChanged = (order, previousStatus) =>
+const emitOrderCreated = (order) => { broadcast('order.created', { order: serializeOrder(order) }); emitTracking(order); };
+const emitOrderUpdated = (order) => { broadcast('order.updated', { order: serializeOrder(order) }); emitTracking(order); };
+const emitOrderStatusChanged = (order, previousStatus) => {
   broadcast('order.status_changed', {
     order: serializeOrder(order),
     previousStatus: previousStatus || null,
   });
-const emitOrderCancelled = (order) => broadcast('order.cancelled', { order: serializeOrder(order) });
+  emitTracking(order);
+};
+const emitOrderCancelled = (order) => { broadcast('order.cancelled', { order: serializeOrder(order) }); emitTracking(order); };
 
 /**
  * جلسة واحدة لكل مستخدم: عند دخول جديد تُبلَّغ اتصالات الجلسات الأخرى

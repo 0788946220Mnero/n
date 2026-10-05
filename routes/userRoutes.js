@@ -1,5 +1,7 @@
 const express = require('express');
 const router = express.Router();
+const { audit } = require('../middlewares/activityLogger');
+
 const { protect, authorize } = require('../middlewares/auth');
 const {
   getUsers,
@@ -17,8 +19,8 @@ router.get('/', protect, authorize('admin', 'manager'), getUsers);
 router.get('/me', protect, getMyProfile);
 router.get('/permissions', protect, authorize('admin', 'manager'), getPermissionCatalog);
 router.get('/:id', protect, authorize('admin', 'manager'), getUser);
-router.post('/', protect, authorize('admin'), createUser);
-router.put('/:id', protect, authorize('admin'), updateUser);
-router.delete('/:id', protect, authorize('admin'), deleteUser);
+router.post('/', protect, authorize('admin'), audit('user.create', (req) => ({ details: { username: req.body.username || '', name: req.body.name || '', role: req.body.role || '' } })), createUser);
+router.put('/:id', protect, authorize('admin'), audit('user.update', (req) => ({ details: { userId: req.params.id, fields: Object.keys(req.body || {}).filter((k) => !/pass/i.test(k)) } })), updateUser);
+router.delete('/:id', protect, authorize('admin'), audit('user.delete', (req) => ({ details: { userId: req.params.id } })), deleteUser);
 
 module.exports = router;

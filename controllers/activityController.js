@@ -1,0 +1,52 @@
+const mongoose = require('mongoose');
+const ActivityLog = require('../models/ActivityLog');
+
+const ACTIONS = {
+  login: 'تسجيل الدخول',
+  logout: 'تسجيل الخروج',
+  'order.confirm': 'تأكيد طلب',
+  'order.status': 'تغيير حالة طلب',
+  'order.complete': 'إكمال طلب (تم التسليم)',
+  'order.cancel': 'إلغاء طلب',
+  'order.assign_driver': 'تعيين موظف توصيل',
+  'order.delivery_sent': 'إرسال تفاصيل الطلب للمندوب',
+  'pos.sale': 'بيع سفري',
+  'shift.open': 'فتح الجرد',
+  'shift.close': 'إغلاق الجرد',
+  'expense.create': 'تسجيل مصروف',
+  'user.create': 'إضافة مستخدم',
+  'user.update': 'تعديل مستخدم',
+  'user.delete': 'حذف مستخدم',
+  'settings.update': 'تعديل الإعدادات',
+  'product.create': 'إضافة صنف',
+  'product.update': 'تعديل صنف',
+  'product.delete': 'حذف صنف',
+  'phone.block': 'حظر رقم',
+  'phone.unblock': 'إلغاء حظر رقم',
+};
+
+// GET /api/activity?user=&action=&from=&to=&q=&page=&limit=
+const listActivity = async (req, res) => {
+  const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+  const limit = Math.min(200, Math.max(1, parseInt(req.query.limit, 10) || 50));
+  const f = {};
+  if (req.query.user && mongoose.Types.ObjectId.isValid(req.query.user)) f.user = req.query.user;
+  if (req.query.action && ACTIONS[req.query.action]) f.action = req.query.action;
+  if (req.query.from || req.query.to) {
+    f.createdAt = {};
+    if (req.query.from) f.createdAt.$gte = new Date(`${req.query.from}T00:00:00+03:00`);
+    if (req.query.to) f.createdAt.$lt = new Date(new Date(`${req.query.to}T00:00:00+03:00`).getTime() + 86400000);
+  }
+  if (req.query.q) f.orderNumber = String(req.query.q).trim();
+
+  const [data, total] = await Promise.all([
+    ActivityLog.find(f).sort({ createdAt: -1 }).skip((page - 1) * limit).limit(limit).lean(),
+    ActivityLog.countDocuments(f),
+  ]);
+  res.json({ success: true, data, pagination: { page, limit, total, pages: Math.ceil(total / limit) } });
+};
+
+// GET /api/activity/actions — أسماء العمليات للفلتر
+const listActions = async (req, res) => res.json({ success: true, data: ACTIONS });
+
+module.exports = { listActivity, listActions, ACTIONS };

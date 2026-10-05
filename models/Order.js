@@ -75,11 +75,48 @@ const orderSchema = new mongoose.Schema(
     driverAssignedAt: { type: Date, default: null },
     deliverySettledAt: { type: Date, default: null },
     deliveryShiftId: { type: String, default: '' },
+    // ═══ التتبع وسجل التوصيل (حقول اختيارية — الطلبات القديمة تبقى صالحة) ═══
+    // رمز سري يُعطى للزبون عند الطلب: به يتابع طلبه ويرى سجله، ولا يُعرض في قوائم الإدارة
+    trackingToken: { type: String, default: '', select: false },
+    // لحظات التوصيل الحقيقية كما سجّلها الخادم
+    deliverySentAt: { type: Date, default: null },       // أُرسلت تفاصيل الطلب للمندوب
+    deliverySentByName: { type: String, default: '' },
+    outForDeliveryAt: { type: Date, default: null },     // خرج للتوصيل
+    deliveredAt: { type: Date, default: null },          // تم التسليم
+    // تسلسل الحالات (للتتبع ولسجل التوصيل)
+    timeline: [
+      {
+        _id: false,
+        event: String,      // status:<حالة> | driver_assigned | delivery_sent
+        at: Date,
+        byName: String,
+      },
+    ],
     printRequested: { type: Boolean, default: false },
     printed: { type: Boolean, default: false },
     printedAt: { type: Date, default: null },
   },
   { timestamps: true }
 );
+
+/* رمز التتبع سرّ الزبون: لا يخرج في أي رد JSON (قوائم الإدارة، تحديث الحالة...).
+   عمليات «ابحث وحدّث» تقرؤه دون إسقاطه — إسقاط الحقول داخلها غير مدعوم في كل
+   محرّكات MongoDB المتوافقة — ثم يُحذف هنا قبل الإرسال. */
+orderSchema.pre(['findOneAndUpdate'], function includeTokenInternally() {
+  this.select('+trackingToken');
+});
+orderSchema.set('toJSON', {
+  transform(doc, ret) {
+    delete ret.trackingToken;
+    return ret;
+  },
+});
+
+// فهارس الإحصائيات وسجل الطلبات والتوصيل — تُبنى في الخلفية ولا تمس البيانات
+orderSchema.index({ createdAt: -1 });
+orderSchema.index({ status: 1, createdAt: -1 });
+orderSchema.index({ orderType: 1, source: 1, createdAt: -1 });
+orderSchema.index({ driver: 1, createdAt: -1 });
+orderSchema.index({ phone: 1, createdAt: -1 });
 
 module.exports = mongoose.model('Order', orderSchema);

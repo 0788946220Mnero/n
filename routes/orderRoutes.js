@@ -20,7 +20,17 @@ const {
   closeShift,
   getDrivers,
   assignDriver,
+  markDeliverySent,
+  trackOrder,
+  trackBatch,
+  myOrders,
 } = require('../controllers/orderController');
+const { requirePermission } = require('../middlewares/permission');
+const { requireCustomer } = require('../middlewares/phoneAuth');
+const rateLimit = require('express-rate-limit');
+
+// تتبع الزبون عام برمز سري — مع حد للطلبات يمنع التخمين
+const trackLimiter = rateLimit({ windowMs: 60 * 1000, max: 120, standardHeaders: true, legacyHeaders: false });
 
 // برنامج الطابعة المحلي (بطاقة طباعة، لا JWT)
 // بيع مباشر من تطبيق DiyarPOS — للكاشير فما فوق
@@ -39,6 +49,11 @@ router.get('/shift-summary', protect, getShiftSummary);
 router.get('/shift-overview', protect, authorize('admin', 'manager'), getShiftOverview);
 router.post('/close-shift', protect, authorize('admin', 'manager', 'cashier'), closeShift);
 
+// الزبون: تتبع طلبه وسجل طلباته — قبل /:id
+router.post('/track', trackLimiter, trackBatch);
+router.get('/track/:id', trackLimiter, trackOrder);
+router.get('/my', requireCustomer, myOrders);
+
 // المندوبون: القائمة قبل /:id حتى لا تُفسَّر «drivers» معرّفاً
 router.get('/drivers', protect, getDrivers);
 router.get('/stats/dashboard', protect, getDashboardStats);
@@ -47,6 +62,8 @@ router.get('/:id', protect, getOrder);
 router.post('/', createOrder); // يمكن إنشاؤه من الموقع العام بدون توكن — يُنشأ دائماً بحالة "معلّق"
 router.put('/:id/confirm', protect, authorize('admin', 'manager', 'cashier'), confirmOrder);
 router.put('/:id/status', protect, authorize('admin', 'manager', 'cashier'), updateOrderStatus);
-router.put('/:id/driver', protect, authorize('admin', 'manager', 'cashier'), assignDriver);
+// تعيين المندوب وإرسال التفاصيل: لمن يملك نظام التوصيل أو إدارة الطلبات (التوافق مع الصلاحيات المخصّصة القديمة)
+router.put('/:id/driver', protect, requirePermission('delivery:manage', 'orders:manage'), assignDriver);
+router.post('/:id/delivery-sent', protect, requirePermission('delivery:manage', 'orders:manage'), markDeliverySent);
 
 module.exports = router;
