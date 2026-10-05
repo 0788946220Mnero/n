@@ -52,6 +52,7 @@ const serializeOrder = (order) => ({
   cancelledAt: order.cancelledAt || null,
   confirmedAt: order.confirmedAt || null,
   closed: !!order.closed,
+  mapHidden: !!order.mapHidden,
   deliveryState: order.orderType === 'delivery' && order.source !== 'pos' ? deliveryState(order) : '',
 });
 
@@ -237,8 +238,12 @@ const emitPrintJobUpdated = (job) => broadcast('print.job.updated', { job: seria
 
 const connectedCount = () => clients.size;
 
+/** أُغلق جرد: الخرائط واللوحات المفتوحة تعيد جلب ما تغيّر (طلبات صارت من جرد سابق). */
+const emitShiftClosed = (shiftId, scope) => broadcast('shift.closed', { shiftId, scope });
+
 module.exports = {
   init,
+  emitShiftClosed,
   emitOrderCreated,
   emitOrderUpdated,
   emitOrderStatusChanged,

@@ -30,7 +30,8 @@ const orderSchema = new mongoose.Schema(
     itemsTotal: { type: Number, default: 0 },
     deliveryFee: { type: Number, default: 0 },
     total: { type: Number, required: true },
-    paymentMethod: { type: String, enum: ['cash', 'card', 'online'], default: 'cash' },
+    // cash نقدي | cliq كليك | card فيزا/بطاقة | online (قديم، يبقى للتوافق)
+    paymentMethod: { type: String, enum: ['cash', 'cliq', 'card', 'online'], default: 'cash' },
     orderType: { type: String, enum: ['delivery', 'pickup'], default: 'delivery' },
 
     // ═══ بيانات التوصيل (اختيارية — الطلبات القديمة تبقى صالحة) ═══
@@ -83,6 +84,10 @@ const orderSchema = new mongoose.Schema(
     deliverySentByName: { type: String, default: '' },
     outForDeliveryAt: { type: Date, default: null },     // خرج للتوصيل
     deliveredAt: { type: Date, default: null },          // تم التسليم
+    // أُزيل من خريطة التوصيل الحية (طلب عالق من جرد سابق) — لا يغيّر حالته ولا يحذفه
+    mapHidden: { type: Boolean, default: false },
+    mapHiddenAt: { type: Date, default: null },
+    mapHiddenByName: { type: String, default: '' },
     // تسلسل الحالات (للتتبع ولسجل التوصيل)
     timeline: [
       {

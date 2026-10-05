@@ -28,6 +28,7 @@ const PERMISSIONS = [
   { key: 'delivery:manage', label: 'نظام التوصيل: الخريطة وتعيين المندوبين وسجل التوصيل' },
   { key: 'activity:view', label: 'سجل نشاط المستخدمين' },
   { key: 'shifts:view', label: 'سجل الجرد (كل الدورات)' },
+  { key: 'delivery:mapManage', label: 'إدارة خريطة التوصيل: إزالة الطلبات العالقة من جرد سابق' },
 ];
 
 const ALL_KEYS = PERMISSIONS.map((p) => p.key);

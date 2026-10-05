@@ -37,6 +37,8 @@ const shiftSessionSchema = new mongoose.Schema(
     salesTotal: { type: Number, default: 0 },
     deliveryTotal: { type: Number, default: 0 },
     cashTotal: { type: Number, default: 0 },
+    cliqTotal: { type: Number, default: 0 },
+    cardTotal: { type: Number, default: 0 },
     otherPaymentsTotal: { type: Number, default: 0 },
     expensesTotal: { type: Number, default: 0 },
     cashNet: { type: Number, default: 0 },

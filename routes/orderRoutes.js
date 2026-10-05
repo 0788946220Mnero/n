@@ -21,6 +21,7 @@ const {
   getDrivers,
   assignDriver,
   markDeliverySent,
+  setPaymentMethod,
   trackOrder,
   trackBatch,
   myOrders,
@@ -65,5 +66,6 @@ router.put('/:id/status', protect, authorize('admin', 'manager', 'cashier'), upd
 // تعيين المندوب وإرسال التفاصيل: لمن يملك نظام التوصيل أو إدارة الطلبات (التوافق مع الصلاحيات المخصّصة القديمة)
 router.put('/:id/driver', protect, requirePermission('delivery:manage', 'orders:manage'), assignDriver);
 router.post('/:id/delivery-sent', protect, requirePermission('delivery:manage', 'orders:manage'), markDeliverySent);
+router.put('/:id/payment', protect, requirePermission('orders:manage'), setPaymentMethod);
 
 module.exports = router;

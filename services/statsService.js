@@ -102,6 +102,8 @@ const buildRangePipeline = (match) => [
             posCount: { $sum: { $cond: [{ $and: [isSuccess, isPos] }, 1, 0] } },
             posValue: { $sum: { $cond: [{ $and: [isSuccess, isPos] }, salesValueExpr, 0] } },
             cashValue: { $sum: { $cond: [{ $and: [isSuccess, { $eq: [{ $ifNull: ['$paymentMethod', 'cash'] }, 'cash'] }] }, salesValueExpr, 0] } },
+            cliqValue: { $sum: { $cond: [{ $and: [isSuccess, { $eq: ['$paymentMethod', 'cliq'] }] }, salesValueExpr, 0] } },
+            cardValue: { $sum: { $cond: [{ $and: [isSuccess, { $in: ['$paymentMethod', ['card', 'online']] }] }, salesValueExpr, 0] } },
           },
         },
       ],
@@ -179,6 +181,8 @@ const shapeRangeResult = (facet, { firstOrderByPhone = new Map(), from } = {}) =
       gross: r3(t.gross),                  // شامل التوصيل
       average: success ? r3(t.value / success) : 0,
       cash: r3(t.cashValue),
+      cliq: r3(t.cliqValue),
+      card: r3(t.cardValue),
       other: r3((t.value || 0) - (t.cashValue || 0)),
     },
     delivery: { count: t.deliveryCount || 0, value: r3(t.deliveryValue), fees: r3(t.deliveryFees) },

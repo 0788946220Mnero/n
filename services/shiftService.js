@@ -60,6 +60,8 @@ const numbersFrom = (summary = {}) => ({
   salesTotal: Number(summary.successTotal || 0),
   deliveryTotal: Number(summary.deliveryIncluded ? summary.deliveryTotal || 0 : summary.deliveryInfoTotal || 0),
   cashTotal: Number(summary.cashTotal || 0),
+  cliqTotal: Number(summary.cliqTotal || 0),
+  cardTotal: Number(summary.cardTotal || 0),
   otherPaymentsTotal: Number(summary.otherPaymentsTotal || 0),
   expensesTotal: Number(summary.expensesTotal || 0),
   cashNet: Number(summary.cashNet || 0),

@@ -3,6 +3,26 @@ const Order = require('../models/Order');
 const User = require('../models/User');
 const Setting = require('../models/Setting');
 const { deliveryState, deliveryStateFilter, DELIVERY_STATES, DELIVERY_BASE } = require('../utils/deliveryState');
+const ShiftSession = require('../models/ShiftSession');
+const { logActivity } = require('../utils/activity');
+const realtime = require('../services/realtimeService');
+
+/** آخر إغلاق جرد (أي نطاق) — ما قبله «جرد سابق». */
+const lastCloseAt = async () => {
+  const last = await ShiftSession.findOne({ status: 'closed', closedAt: { $ne: null } }).sort({ closedAt: -1 }).select('closedAt').lean();
+  return last ? last.closedAt : null;
+};
+
+/**
+ * طلب عالق من جرد سابق: لم يكتمل (لم يُسلَّم ولم يُلغَ) ويعود لجرد مضى —
+ *  • أُرشف في جرد مغلق وهو غير مكتمل، أو
+ *  • معلّق لم يُؤكَّد وأُنشئ قبل آخر إغلاق جرد.
+ */
+const isStale = (o, closeAt) => {
+  if (['delivered', 'cancelled'].includes(o.status)) return false;
+  if (o.closed) return true;
+  return o.status === 'pending' && !!closeAt && new Date(o.createdAt) < new Date(closeAt);
+};
 
 const escRx = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const dayStart = (ymd) => new Date(`${ymd}T00:00:00+03:00`);
@@ -49,6 +69,7 @@ const deliveryRecord = (o) => ({
     fromAssignMinutes: minutesBetween(o.driverAssignedAt, o.deliveredAt),
   },
   closed: !!o.closed,
+  stale: !!o.__stale,
 });
 
 const rangeFilter = (q, field = 'createdAt') => {
@@ -66,6 +87,7 @@ const getMap = async (req, res) => {
   const now = Date.now();
   const filter = {
     ...DELIVERY_BASE,
+    mapHidden: { $ne: true }, // أُزيل من الخريطة يدوياً (عالق من جرد سابق)
     $or: [
       // الجارية: آخر 3 أيام (طلب نُسي بلا «تم التسليم» لا يبقى على الخريطة للأبد)
       { status: { $nin: ['delivered', 'cancelled'] }, createdAt: { $gte: new Date(now - 3 * 86400000) } },
@@ -73,10 +95,12 @@ const getMap = async (req, res) => {
       { status: 'cancelled', cancelledAt: { $gte: new Date(now - 12 * 3600000) } },
     ],
   };
-  const [orders, settings] = await Promise.all([
+  const [orders, settings, closeAt] = await Promise.all([
     Order.find(filter).sort({ createdAt: -1 }).limit(500).lean(),
     Setting.findOne().select('delivery.restaurantLatitude delivery.restaurantLongitude').lean(),
+    lastCloseAt(),
   ]);
+  orders.forEach((o) => { o.__stale = isStale(o, closeAt); });
   const d = (settings && settings.delivery) || {};
   res.json({
     success: true,
@@ -84,7 +108,42 @@ const getMap = async (req, res) => {
       ? { latitude: d.restaurantLatitude, longitude: d.restaurantLongitude } : null,
     data: orders.map(deliveryRecord),
     states: DELIVERY_STATES,
+    staleCount: orders.filter((o) => o.__stale).length,
+    lastCloseAt: closeAt,
   });
+};
+
+/**
+ * POST /api/delivery/map/clean  { ids?: [] }
+ * يزيل من الخريطة الحية الطلبات العالقة من جرد سابق (كلها، أو المحدَّدة منها).
+ * لا يغيّر حالة الطلب ولا يحذفه — يبقى في سجل الطلبات وسجل التوصيل كما هو.
+ */
+const cleanMap = async (req, res) => {
+  const closeAt = await lastCloseAt();
+  const filter = {
+    ...DELIVERY_BASE,
+    mapHidden: { $ne: true },
+    status: { $nin: ['delivered', 'cancelled'] },
+    $or: [{ closed: true }, ...(closeAt ? [{ status: 'pending', createdAt: { $lt: closeAt } }] : [])],
+  };
+  const ids = Array.isArray(req.body && req.body.ids) ? req.body.ids.filter((x) => mongoose.Types.ObjectId.isValid(x)) : null;
+  if (ids && ids.length) filter._id = { $in: ids };
+
+  const targets = await Order.find(filter).select('_id').lean();
+  if (!targets.length) return res.json({ success: true, removed: 0, message: 'لا طلبات عالقة لإزالتها' });
+
+  const byName = (req.user && (req.user.name || req.user.username)) || '';
+  await Order.updateMany(
+    { _id: { $in: targets.map((t) => t._id) } },
+    { $set: { mapHidden: true, mapHiddenAt: new Date(), mapHiddenByName: byName } }
+  );
+
+  // كل الخرائط المفتوحة تزيلها فوراً
+  const updated = await Order.find({ _id: { $in: targets.map((t) => t._id) } }).lean();
+  updated.forEach((o) => { try { realtime.emitOrderUpdated(o); } catch (_) {} });
+
+  logActivity({ req, action: 'delivery.map_clean', details: { count: targets.length, orders: updated.slice(0, 20).map((o) => o.orderNumber) } });
+  res.json({ success: true, removed: targets.length, message: `أُزيل ${targets.length} طلب عالق من الخريطة` });
 };
 
 /* ─────────── سجل التوصيل ─────────── */
@@ -181,4 +240,4 @@ const getDriver = async (req, res) => {
   });
 };
 
-module.exports = { getMap, getHistory, getDrivers, getDriver, driverStatsPipeline, deliveryRecord, validCoords };
+module.exports = { getMap, cleanMap, getHistory, getDrivers, getDriver, driverStatsPipeline, deliveryRecord, validCoords, isStale };

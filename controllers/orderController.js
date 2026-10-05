@@ -352,7 +352,7 @@ const createOrder = async (req, res) => {
       customerLongitude: custLng,
       deliveryDistance,
       deliveryDistanceMode,
-      paymentMethod,
+      paymentMethod: ['cash', 'cliq', 'card'].includes(paymentMethod) ? paymentMethod : 'cash',
       orderType: orderType || 'delivery',
       brand: brand || 'diyar',
       notes: notes || '',
@@ -604,6 +604,34 @@ const assignDriver = async (req, res) => {
       details: { driverName: updated.driverName || '', previousDriver: order.driverName || '' },
     });
   }
+  try { realtime.emitOrderUpdated(updated); } catch (e) { console.error('realtime emit failed:', e.message); }
+  res.json(updated);
+};
+
+// PUT /api/orders/:id/payment  { paymentMethod: cash|cliq|card, expectedPaymentMethod? }
+// طلب ضمن جرد مغلق لا يُعدَّل: تغييره يُفسد تقريراً طُبع وسُلّم نقده.
+const setPaymentMethod = async (req, res) => {
+  const method = req.body && req.body.paymentMethod;
+  if (!['cash', 'cliq', 'card'].includes(method)) {
+    return res.status(400).json({ message: 'طريقة دفع غير صالحة (نقدي، كليك، فيزا)' });
+  }
+  const filter = { _id: req.params.id, closed: { $ne: true } };
+  const expected = req.body.expectedPaymentMethod;
+  if (['cash', 'cliq', 'card', 'online'].includes(expected)) {
+    filter.paymentMethod = expected === 'cash' ? { $in: ['cash', null] } : expected;
+  }
+  const before = await Order.findById(req.params.id).select('paymentMethod closed').lean();
+  if (!before) return res.status(404).json({ message: 'الطلب غير موجود' });
+  if (before.closed) return res.status(400).json({ message: 'هذا الطلب ضمن جرد مغلق ولا يمكن تعديل طريقة دفعه' });
+
+  const updated = await Order.findOneAndUpdate(
+    filter,
+    { $set: { paymentMethod: method }, $push: timelinePush(`payment:${method}`, req.user) },
+    { new: true }
+  );
+  if (!updated) return conflict(res, req.params.id, 'تغيّرت طريقة دفع هذا الطلب للتو من مستخدم آخر — تم تحديث البيانات');
+
+  logActivity({ req, order: updated, action: 'order.payment', before: before.paymentMethod || 'cash', after: method });
   try { realtime.emitOrderUpdated(updated); } catch (e) { console.error('realtime emit failed:', e.message); }
   res.json(updated);
 };
@@ -867,7 +895,7 @@ const createPosOrder = async (req, res) => {
       itemsTotal,
       deliveryFee: 0,
       total,
-      paymentMethod: ['cash', 'card', 'online'].includes(paymentMethod) ? paymentMethod : 'cash',
+      paymentMethod: ['cash', 'cliq', 'card'].includes(paymentMethod) ? paymentMethod : 'cash',
       orderType: 'pickup',
       notes: String(notes || ''),
       brand: brand || 'diyar',
@@ -972,6 +1000,27 @@ const unblockPhone = async (req, res) => {
 /** قيمة البيع الفعلية للمطعم: الإجمالي ناقص رسوم التوصيل. */
 const salesValue = (o) => Math.max(0, Number(o.total || 0) - Number(o.deliveryFee || 0));
 
+/** طريقة دفع الطلب: القديم بلا طريقة = نقدي؛ «أونلاين» القديم يُحسب مع الفيزا (بطاقة). */
+const payOf = (o) => {
+  const m = o.paymentMethod || 'cash';
+  return m === 'online' ? 'card' : m;
+};
+
+/** مجموع وعدد كل طريقة دفع (بقيمة الأصناف — التوصيل للمندوب). */
+const paymentTotals = (success) => {
+  const pick = (m) => success.filter((o) => payOf(o) === m);
+  const r = (arr) => Number(arr.reduce((t, o) => t + salesValue(o), 0).toFixed(3));
+  const cash = pick('cash');
+  const cliq = pick('cliq');
+  const card = pick('card');
+  return {
+    cashCount: cash.length, cashTotal: r(cash),
+    cliqCount: cliq.length, cliqTotal: r(cliq),
+    cardCount: card.length, cardTotal: r(card),
+    otherPaymentsTotal: Number((r(cliq) + r(card)).toFixed(3)),
+  };
+};
+
 /**
  * تفصيل المنتجات: كل منتج باسمه (لا التصنيف) — الكمية المباعة وقيمتها، من الطلبات المحققة فقط.
  * القيمة = سعر السطر (شامل إضافاته) × الكمية، وهو نفس ما دخل المبيعات.
@@ -1046,9 +1095,8 @@ const summarizeOrders = (orders, expenses = [], delivery = null) => {
     successTotal: sum(success),
     // كل منتج باسمه وكميته وقيمته (المحققة فقط)
     products: productBreakdown(success),
-    // طرق الدفع: النقدي (والقديم بلا طريقة دفع)، وغيره (بطاقة/أونلاين)
-    cashTotal: sum(success.filter((o) => (o.paymentMethod || 'cash') === 'cash')),
-    otherPaymentsTotal: sum(success.filter((o) => (o.paymentMethod || 'cash') !== 'cash')),
+    // طرق الدفع: نقدي (والقديم بلا طريقة دفع)، كليك، فيزا — عدداً ومجموعاً
+    ...paymentTotals(success),
     platformCount: platform.length,
     platformTotal: sum(platform),
     directCount: direct.length,
@@ -1068,7 +1116,8 @@ const summarizeOrders = (orders, expenses = [], delivery = null) => {
     expensesTotal,
     // ما يجب أن يكون في الصندوق: المبيعات المحققة ناقص ما صُرف منها
     // (التوصيل لا يدخل: المندوب يحصّله من الزبون ويحتفظ به)
-    cashNet: Number((sum(success) - expensesTotal).toFixed(3)),
+    // ما في الدرج فعلاً: النقدي فقط ناقص المصروفات (كليك وفيزا لا تدخل الصندوق)
+    cashNet: Number((sum(success.filter((o) => payOf(o) === 'cash')) - expensesTotal).toFixed(3)),
     firstAt: times.length ? new Date(Math.min(...times)) : null,
     generatedAt: new Date(),
   };
@@ -1287,6 +1336,7 @@ const closeShift = async (req, res) => {
       console.error('حفظ دورة الجرد تعذّر:', e.message); // الإغلاق نفسه تمّ — لا نُفشله
     }
     logActivity({ req, action: 'shift.close', amount: summary.successTotal, details: { shiftId, scope, ordersCount: summary.successCount } });
+    try { realtime.emitShiftClosed(shiftId, scope); } catch (_) { /* البث لا يُفشل الإغلاق */ }
 
     console.log(`📊 إغلاق جرد ${shiftId} بواسطة ${user.username} (${scope}) — محقق: ${summary.successCount} (${summary.successTotal}) | معلّقة: ${summary.pendingCount} | ملغاة: ${summary.cancelledCount} | مصروفات: ${summary.expensesTotal} | توصيل للمندوبين: ${summary.deliveryCount} (${summary.deliveryTotal})`);
 
@@ -1307,6 +1357,7 @@ module.exports = wrapAll({
   getDrivers,
   assignDriver,
   markDeliverySent,
+  setPaymentMethod,
   trackOrder,
   trackBatch,
   myOrders,

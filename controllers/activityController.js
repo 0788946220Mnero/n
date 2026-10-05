@@ -10,6 +10,8 @@ const ACTIONS = {
   'order.cancel': 'إلغاء طلب',
   'order.assign_driver': 'تعيين موظف توصيل',
   'order.delivery_sent': 'إرسال تفاصيل الطلب للمندوب',
+  'order.payment': 'تغيير طريقة الدفع',
+  'delivery.map_clean': 'إزالة طلبات عالقة من خريطة التوصيل',
   'pos.sale': 'بيع سفري',
   'shift.open': 'فتح الجرد',
   'shift.close': 'إغلاق الجرد',
