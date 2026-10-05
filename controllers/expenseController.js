@@ -40,6 +40,7 @@ const createExpense = async (req, res) => {
     number: await nextNumber(),
     name,
     amount: Number(amount.toFixed(3)),
+    paidTo: String((req.body && req.body.paidTo) || '').trim().slice(0, 80),
     brand: (req.body && req.body.brand) || 'diyar',
     createdBy: req.user._id,
     createdByName: nameOf(req.user),
@@ -106,7 +107,7 @@ const logExpenses = async (req, res) => {
   if (req.query.q) {
     const q = String(req.query.q).trim();
     const rx = { $regex: q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), $options: 'i' };
-    f.$or = [{ name: rx }, { createdByName: rx }, ...(/^\d+$/.test(q) ? [{ number: Number(q) }] : [])];
+    f.$or = [{ name: rx }, { createdByName: rx }, { paidTo: rx }, ...(/^\d+$/.test(q) ? [{ number: Number(q) }] : [])];
   }
 
   const [data, total, sums] = await Promise.all([

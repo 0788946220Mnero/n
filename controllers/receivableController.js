@@ -23,11 +23,11 @@ const nextNumber = async () => {
   }
 };
 
-// POST /api/receivables  { customerName, phone, lines:[{name,quantity,price}], amount?, notes, orderNumber }
+// POST /api/receivables  { customerName (المورّد), phone, invoiceNumber, lines:[{name,quantity,price}], amount?, notes }
 const createReceivable = async (req, res) => {
   const b = req.body || {};
   const customerName = String(b.customerName || '').trim();
-  if (!customerName) return res.status(400).json({ message: 'اسم الزبون مطلوب' });
+  if (!customerName) return res.status(400).json({ message: 'اسم المورّد مطلوب' });
 
   const lines = (Array.isArray(b.lines) ? b.lines : [])
     .map((l) => ({ name: String((l && l.name) || '').trim().slice(0, 120), quantity: Number(l && l.quantity) || 1, price: Number(l && l.price) || 0 }))
@@ -43,7 +43,7 @@ const createReceivable = async (req, res) => {
     lines,
     amount,
     notes: String(b.notes || '').trim().slice(0, 300),
-    orderNumber: String(b.orderNumber || '').trim().slice(0, 30),
+    invoiceNumber: String(b.invoiceNumber || '').trim().slice(0, 40),
     createdBy: req.user._id,
     createdByName: nameOf(req.user),
   });
@@ -66,10 +66,10 @@ const listReceivables = async (req, res) => {
   if (req.query.q) {
     const q = String(req.query.q).trim();
     const rx = { $regex: esc(q), $options: 'i' };
-    f.$or = [{ customerName: rx }, { phone: rx }, { notes: rx }, ...(/^\d+$/.test(q) ? [{ number: Number(q) }] : [])];
+    f.$or = [{ customerName: rx }, { phone: rx }, { notes: rx }, { invoiceNumber: rx }, ...(/^\d+$/.test(q) ? [{ number: Number(q) }] : [])];
   }
 
-  // الأرصدة: المستحق كله (غير المدفوع، بلا فلتر تاريخ) — أهم رقم في الذمم
+  // الأرصدة: المستحق على المطعم كله (غير المدفوع، بلا فلتر تاريخ) — أهم رقم في الذمم
   const [data, total, unpaidAll, filtered] = await Promise.all([
     Receivable.find(f).sort({ createdAt: -1 }).skip((page - 1) * limit).limit(limit).lean(),
     Receivable.countDocuments(f),

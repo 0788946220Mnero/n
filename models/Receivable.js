@@ -1,11 +1,12 @@
 const mongoose = require('mongoose');
 
 /**
- * فاتورة ذمم: زبون أخذ بضاعة/طلباً ولم يدفع بعد.
+ * ذمة على المطعم: فاتورة خارجية من مورّد (بضاعة/خدمة) لم يسدّدها المطعم بعد.
  *  • غير مدفوعة ← تُطبع بختم «غير مدفوع».
- *  • التسديد (نقداً/كليك/فيزا) يُسجَّل ومن قام به، فتُطبع بختم «دُفع نقداً»…
- *    ويدخل التحصيل جرد من حصّله (النقدي يُضاف للصندوق).
+ *  • التسديد للمورّد (نقداً/كليك/فيزا) يُسجَّل ومن قام به، فتُطبع بختم «دُفع نقداً»…
+ *    ويدخل جرد من سدّدها كمال خارج (النقدي يُطرح من الصندوق).
  *  • لا تُحذف أبداً حذفاً نهائياً، والإزالة (أرشفة) لمدير النظام وحده — يفرضها الخادم.
+ * ملاحظة: الحقل customerName يحمل اسم المورّد (الاسم القديم أُبقي للتوافق مع السجلات المحفوظة).
  */
 const lineSchema = new mongoose.Schema(
   {
@@ -24,7 +25,8 @@ const receivableSchema = new mongoose.Schema(
     lines: { type: [lineSchema], default: [] },
     amount: { type: Number, required: true, min: 0.001, max: 1000000 },
     notes: { type: String, default: '', maxlength: 300 },
-    orderNumber: { type: String, default: '' }, // اختياري: رقم طلب مرتبط
+    orderNumber: { type: String, default: '' }, // (قديم) لا يُستخدم
+    invoiceNumber: { type: String, default: '', trim: true, maxlength: 40 }, // رقم فاتورة المورّد
 
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
     createdByName: { type: String, default: '' },
@@ -35,7 +37,7 @@ const receivableSchema = new mongoose.Schema(
     paidByName: { type: String, default: '' },
     paymentMethod: { type: String, enum: ['cash', 'cliq', 'card', ''], default: '' },
 
-    // التحصيل يدخل جرد من حصّله، ويُؤرشف عند إغلاق جرده (كالمصروف)
+    // التسديد يدخل جرد من سدّد (مال خارج)، ويُؤرشف عند إغلاق جرده (كالمصروف)
     collectionClosed: { type: Boolean, default: false, index: true },
     collectionShiftId: { type: String, default: '' },
 

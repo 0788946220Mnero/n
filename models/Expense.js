@@ -12,6 +12,7 @@ const expenseSchema = new mongoose.Schema(
     number: { type: Number, index: true },
     name: { type: String, required: true, trim: true, maxlength: 120 },
     amount: { type: Number, required: true, min: 0.001, max: 100000 },
+    paidTo: { type: String, default: '', trim: true, maxlength: 80 }, // «صرفنا إلى» في سند الصرف
     brand: { type: String, default: 'diyar' },
 
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },

@@ -1043,7 +1043,7 @@ const productBreakdown = (orders) => {
     .sort((a, b) => b.quantity - a.quantity || b.value - a.value || a.name.localeCompare(b.name, 'ar'));
 };
 
-/** تحصيلات الذمم غير المؤرشفة: لمن حصّلها، أو للمطعم كله في الجرد الكامل. */
+/** تسديدات ذمم الموردين غير المؤرشفة: لمن سدّدها، أو للمطعم كله في الجرد الكامل. */
 const loadCollections = (user, scope) => {
   const Receivable = require('../models/Receivable');
   const f = { status: 'paid', deleted: { $ne: true }, collectionClosed: { $ne: true } };
@@ -1126,23 +1126,25 @@ const summarizeOrders = (orders, expenses = [], delivery = null, collections = [
       .slice()
       .sort((x, y) => new Date(x.createdAt) - new Date(y.createdAt))
       .map((e) => ({ number: e.number || null, name: e.name || '', amount: Number(Number(e.amount || 0).toFixed(3)), at: e.createdAt || null, by: e.createdByName || '' })),
-    // الصافي = مجموع البيع (بدون توصيل) − المصروفات
-    netAfterExpenses: Number((sum(success) - expensesTotal).toFixed(3)),
-    // تحصيل الذمم: مال دخل في هذا الجرد عن فواتير سابقة (ليس بيعاً جديداً)
-    collections: (collections || []).map((r) => ({
-      number: r.number || null, name: r.customerName || '', amount: Number(Number(r.amount || 0).toFixed(3)),
+    // الصافي = مجموع البيع (بدون توصيل) − المصروفات − ما سُدّد للموردين
+    netAfterExpenses: Number((sum(success) - expensesTotal
+      - (collections || []).reduce((t, r) => t + Number(r.amount || 0), 0)).toFixed(3)),
+    // تسديد ذمم الموردين: مال خرج في هذا الجرد عن فواتير خارجية سابقة
+    supplierPayments: (collections || []).map((r) => ({
+      number: r.number || null, name: r.customerName || '', invoiceNumber: r.invoiceNumber || '',
+      amount: Number(Number(r.amount || 0).toFixed(3)),
       method: r.paymentMethod || 'cash', by: r.paidByName || '', at: r.paidAt || null,
     })),
-    collectionsCount: (collections || []).length,
-    collectionsTotal: Number((collections || []).reduce((t, r) => t + Number(r.amount || 0), 0).toFixed(3)),
-    collectionsCash: Number((collections || []).filter((r) => (r.paymentMethod || 'cash') === 'cash').reduce((t, r) => t + Number(r.amount || 0), 0).toFixed(3)),
+    supplierPaymentsCount: (collections || []).length,
+    supplierPaymentsTotal: Number((collections || []).reduce((t, r) => t + Number(r.amount || 0), 0).toFixed(3)),
+    supplierPaymentsCash: Number((collections || []).filter((r) => (r.paymentMethod || 'cash') === 'cash').reduce((t, r) => t + Number(r.amount || 0), 0).toFixed(3)),
     expensesTotal,
     // ما يجب أن يكون في الصندوق: المبيعات المحققة ناقص ما صُرف منها
     // (التوصيل لا يدخل: المندوب يحصّله من الزبون ويحتفظ به)
     // ما في الدرج فعلاً: النقدي فقط ناقص المصروفات (كليك وفيزا لا تدخل الصندوق)
-    // + تحصيل الذمم نقداً: دخل الدرج فعلاً في هذا الجرد
+    // − ما سُدّد للموردين نقداً من الدرج في هذا الجرد
     cashNet: Number((sum(success.filter((o) => payOf(o) === 'cash'))
-      + (collections || []).filter((r) => (r.paymentMethod || 'cash') === 'cash').reduce((t, r) => t + Number(r.amount || 0), 0)
+      - (collections || []).filter((r) => (r.paymentMethod || 'cash') === 'cash').reduce((t, r) => t + Number(r.amount || 0), 0)
       - expensesTotal).toFixed(3)),
     firstAt: times.length ? new Date(Math.min(...times)) : null,
     generatedAt: new Date(),
@@ -1263,7 +1265,7 @@ const groupByUser = (orders, expenses, collections = []) => {
 const userSummaries = (orders, expenses, collections = []) =>
   groupByUser(orders, expenses, collections)
     .map((g) => ({ userId: g.userId, userName: g.name, scope: 'mine', ...summarizeOrders(g.orders, g.expenses, null, g.collections) }))
-    .filter((u) => u.successCount || u.cancelledCount || u.expensesCount || u.collectionsCount)
+    .filter((u) => u.successCount || u.cancelledCount || u.expensesCount || u.supplierPaymentsCount)
     .sort((a, b) => b.successTotal - a.successTotal);
 
 const getShiftOverview = async (req, res) => {
@@ -1369,7 +1371,7 @@ const closeShift = async (req, res) => {
     } catch (e) {
       console.error('حفظ دورة الجرد تعذّر:', e.message); // الإغلاق نفسه تمّ — لا نُفشله
     }
-    // التحصيلات دخلت هذا الجرد: تُؤرشف فلا تُحسب مرة ثانية
+    // تسديدات الموردين دخلت هذا الجرد: تُؤرشف فلا تُحسب مرة ثانية
     if (collections.length) {
       try {
         await require('../models/Receivable').updateMany(

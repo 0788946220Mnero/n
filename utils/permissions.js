@@ -29,7 +29,7 @@ const PERMISSIONS = [
   { key: 'activity:view', label: 'سجل نشاط المستخدمين' },
   { key: 'shifts:view', label: 'سجل الجرد (كل الدورات)' },
   { key: 'delivery:mapManage', label: 'إدارة خريطة التوصيل: إزالة الطلبات العالقة من جرد سابق' },
-  { key: 'receivables:manage', label: 'الذمم: إنشاء فواتير الذمم وتسديدها وطباعتها (الإزالة لمدير النظام فقط)' },
+  { key: 'receivables:manage', label: 'ذمم الموردين: تسجيل فواتير الموردين وتسديدها وطباعتها (الإزالة لمدير النظام فقط)' },
   { key: 'supplies:manage', label: 'قائمة البضائع المطلوبة للمطعم' },
 ];
 
@@ -47,7 +47,7 @@ const ROLE_PERMISSIONS = {
     'customers:manage',
     'printers:manage',
     'delivery:manage', // الكاشير يعيّن المندوب ويرسل الطلب — كما كان يفعل من قائمة الطلبات
-    'receivables:manage', // ذمم الزبائن: إنشاء وتسديد وطباعة (الإزالة لمدير النظام وحده)
+    'receivables:manage', // ذمم الموردين: تسجيل وتسديد وطباعة (الإزالة لمدير النظام وحده)
     'supplies:manage', // قائمة البضائع المطلوبة
   ],
   employee: ['orders:view', 'products:view'],
