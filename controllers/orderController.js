@@ -1113,6 +1113,13 @@ const summarizeOrders = (orders, expenses = [], delivery = null) => {
     cancelledCount: cancelled.length,
     cancelledTotal: sum(cancelled),
     expensesCount: liveExpenses.length,
+    // المصروفات سطراً سطراً (تُطبع في الجرد بدل الدفتر الورقي) — بترتيب تسجيلها
+    expenseItems: liveExpenses
+      .slice()
+      .sort((x, y) => new Date(x.createdAt) - new Date(y.createdAt))
+      .map((e) => ({ number: e.number || null, name: e.name || '', amount: Number(Number(e.amount || 0).toFixed(3)), at: e.createdAt || null, by: e.createdByName || '' })),
+    // الصافي = مجموع البيع (بدون توصيل) − المصروفات
+    netAfterExpenses: Number((sum(success) - expensesTotal).toFixed(3)),
     expensesTotal,
     // ما يجب أن يكون في الصندوق: المبيعات المحققة ناقص ما صُرف منها
     // (التوصيل لا يدخل: المندوب يحصّله من الزبون ويحتفظ به)

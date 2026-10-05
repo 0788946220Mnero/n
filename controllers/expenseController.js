@@ -70,6 +70,7 @@ const voidExpense = async (req, res) => {
   if (expense.closed) return res.status(400).json({ message: 'أُغلق جرد هذا المصروف، فلا يمكن إلغاؤه' });
   if (expense.voided) return res.status(400).json({ message: 'المصروف ملغى مسبقاً' });
 
+  require('../utils/activity').logActivity({ req, action: 'expense.void', amount: expense.amount, details: { name: expense.name, number: expense.number } });
   expense.voided = true;
   expense.voidedByName = nameOf(req.user);
   expense.voidedAt = new Date();
@@ -78,4 +79,52 @@ const voidExpense = async (req, res) => {
   res.json({ success: true, expense });
 };
 
-module.exports = wrapAll({ createExpense, listExpenses, voidExpense });
+/**
+ * GET /api/expenses/log — سجل المصروف الكامل (بديل الدفتر الورقي)
+ *   ?from=YYYY-MM-DD&to=&user=&status=open|closed|voided&q=&shiftId=&page=&limit=
+ * المدير والأدمن يريان الكل، وغيرهما مصروفاته فقط. المجموع للفلتر كله (لا للصفحة).
+ */
+const logExpenses = async (req, res) => {
+  const mongoose = require('mongoose');
+  const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+  const limit = Math.min(200, Math.max(1, parseInt(req.query.limit, 10) || 50));
+  const f = {};
+  if (!isManager(req.user)) f.createdBy = req.user._id;
+  else if (req.query.user && mongoose.Types.ObjectId.isValid(req.query.user)) f.createdBy = new mongoose.Types.ObjectId(req.query.user);
+
+  const day = (s) => new Date(`${s}T00:00:00+03:00`);
+  const ymd = (s) => /^\d{4}-\d{2}-\d{2}$/.test(String(s || ''));
+  if (ymd(req.query.from) || ymd(req.query.to)) {
+    f.createdAt = {};
+    if (ymd(req.query.from)) f.createdAt.$gte = day(req.query.from);
+    if (ymd(req.query.to)) f.createdAt.$lt = new Date(day(req.query.to).getTime() + 86400000);
+  }
+  if (req.query.status === 'open') { f.closed = { $ne: true }; f.voided = { $ne: true }; }
+  if (req.query.status === 'closed') { f.closed = true; f.voided = { $ne: true }; }
+  if (req.query.status === 'voided') f.voided = true;
+  if (req.query.shiftId) f.shiftId = String(req.query.shiftId).trim();
+  if (req.query.q) {
+    const q = String(req.query.q).trim();
+    const rx = { $regex: q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), $options: 'i' };
+    f.$or = [{ name: rx }, { createdByName: rx }, ...(/^\d+$/.test(q) ? [{ number: Number(q) }] : [])];
+  }
+
+  const [data, total, sums] = await Promise.all([
+    Expense.find(f).sort({ createdAt: -1 }).skip((page - 1) * limit).limit(limit).lean(),
+    Expense.countDocuments(f),
+    // المجموع لا يشمل الملغاة (تبقى ظاهرة للمراجعة فقط)
+    // فلتر «ملغاة» مجموعه صفر بطبيعته — لا نكتب شرط «غير ملغى» فوق شرطه
+    req.query.status === 'voided'
+      ? Promise.resolve([])
+      : Expense.aggregate([{ $match: { ...f, voided: { $ne: true } } }, { $group: { _id: null, amount: { $sum: '$amount' }, count: { $sum: 1 } } }]),
+  ]);
+  const t = sums[0] || { amount: 0, count: 0 };
+  res.json({
+    success: true,
+    data,
+    totals: { count: t.count, amount: Number(Number(t.amount || 0).toFixed(3)) },
+    pagination: { page, limit, total, pages: Math.ceil(total / limit) },
+  });
+};
+
+module.exports = wrapAll({ createExpense, listExpenses, voidExpense, logExpenses });

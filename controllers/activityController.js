@@ -16,6 +16,7 @@ const ACTIONS = {
   'shift.open': 'فتح الجرد',
   'shift.close': 'إغلاق الجرد',
   'expense.create': 'تسجيل مصروف',
+  'expense.void': 'إلغاء مصروف',
   'user.create': 'إضافة مستخدم',
   'user.update': 'تعديل مستخدم',
   'user.delete': 'حذف مستخدم',
