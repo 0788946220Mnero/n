@@ -102,6 +102,8 @@ app.use('/api/stats', require('./routes/statsRoutes')); // الإحصائيات 
 app.use('/api/activity', require('./routes/activityRoutes')); // سجل نشاط المستخدمين
 app.use('/api/shifts', require('./routes/shiftRoutes')); // دورات الجرد: فتح وسجل
 app.use('/api/delivery', require('./routes/deliveryRoutes')); // خريطة التوصيل وسجله وموظفوه
+app.use('/api/receivables', require('./routes/receivableRoutes')); // الذمم
+app.use('/api/supplies', require('./routes/supplyRoutes')); // قائمة البضائع المطلوبة
 
 // فحص صحة الخادم — يفيد أيضاً لاختبار CORS من المتصفح
 app.get('/api/health', (req, res) => {

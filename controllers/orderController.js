@@ -1043,7 +1043,15 @@ const productBreakdown = (orders) => {
     .sort((a, b) => b.quantity - a.quantity || b.value - a.value || a.name.localeCompare(b.name, 'ar'));
 };
 
-const summarizeOrders = (orders, expenses = [], delivery = null) => {
+/** تحصيلات الذمم غير المؤرشفة: لمن حصّلها، أو للمطعم كله في الجرد الكامل. */
+const loadCollections = (user, scope) => {
+  const Receivable = require('../models/Receivable');
+  const f = { status: 'paid', deleted: { $ne: true }, collectionClosed: { $ne: true } };
+  if (scope !== 'all') f.paidBy = user._id;
+  return Receivable.find(f).sort({ paidAt: 1 }).lean();
+};
+
+const summarizeOrders = (orders, expenses = [], delivery = null, collections = []) => {
   const isPos = (o) => o.source === 'pos';
   const isSuccess = (o) => o.status !== 'pending' && o.status !== 'cancelled';
   // 3 منازل: الدينار ألف فلس، والتقريب لمنزلتين يُفسد مطابقة نقد الصندوق
@@ -1120,11 +1128,22 @@ const summarizeOrders = (orders, expenses = [], delivery = null) => {
       .map((e) => ({ number: e.number || null, name: e.name || '', amount: Number(Number(e.amount || 0).toFixed(3)), at: e.createdAt || null, by: e.createdByName || '' })),
     // الصافي = مجموع البيع (بدون توصيل) − المصروفات
     netAfterExpenses: Number((sum(success) - expensesTotal).toFixed(3)),
+    // تحصيل الذمم: مال دخل في هذا الجرد عن فواتير سابقة (ليس بيعاً جديداً)
+    collections: (collections || []).map((r) => ({
+      number: r.number || null, name: r.customerName || '', amount: Number(Number(r.amount || 0).toFixed(3)),
+      method: r.paymentMethod || 'cash', by: r.paidByName || '', at: r.paidAt || null,
+    })),
+    collectionsCount: (collections || []).length,
+    collectionsTotal: Number((collections || []).reduce((t, r) => t + Number(r.amount || 0), 0).toFixed(3)),
+    collectionsCash: Number((collections || []).filter((r) => (r.paymentMethod || 'cash') === 'cash').reduce((t, r) => t + Number(r.amount || 0), 0).toFixed(3)),
     expensesTotal,
     // ما يجب أن يكون في الصندوق: المبيعات المحققة ناقص ما صُرف منها
     // (التوصيل لا يدخل: المندوب يحصّله من الزبون ويحتفظ به)
     // ما في الدرج فعلاً: النقدي فقط ناقص المصروفات (كليك وفيزا لا تدخل الصندوق)
-    cashNet: Number((sum(success.filter((o) => payOf(o) === 'cash')) - expensesTotal).toFixed(3)),
+    // + تحصيل الذمم نقداً: دخل الدرج فعلاً في هذا الجرد
+    cashNet: Number((sum(success.filter((o) => payOf(o) === 'cash'))
+      + (collections || []).filter((r) => (r.paymentMethod || 'cash') === 'cash').reduce((t, r) => t + Number(r.amount || 0), 0)
+      - expensesTotal).toFixed(3)),
     firstAt: times.length ? new Date(Math.min(...times)) : null,
     generatedAt: new Date(),
   };
@@ -1189,13 +1208,14 @@ const resolveScope = (user, requested) => (requested === 'all' && canCloseAll(us
 const getShiftSummary = async (req, res) => {
   try {
     const scope = resolveScope(req.user, req.query.scope);
-    const [orders, expenses, delivery] = await Promise.all([
+    const [orders, expenses, delivery, collections] = await Promise.all([
       Order.find(shiftFilter(req.user, scope, req.query.brand)).lean(),
       Expense.find(expenseFilter(req.user, scope)).lean(),
       loadDeliveryLedger(req.user, scope, req.query.brand),
+      loadCollections(req.user, scope),
     ]);
-    const summary = summarizeOrders(orders, expenses, delivery);
-    if (scope === 'all') summary.byUser = userSummaries(orders, expenses);
+    const summary = summarizeOrders(orders, expenses, delivery, collections);
+    if (scope === 'all') summary.byUser = userSummaries(orders, expenses, collections);
     res.json({
       success: true,
       summary: { ...summary, scope, userName: scope === 'all' ? 'جرد المطعم كاملاً' : handlerName(req.user) },
@@ -1211,33 +1231,39 @@ const getShiftSummary = async (req, res) => {
  * جرد كل مستخدم على حدة من طلبات ومصروفات معطاة: من تعامل مع الطلب، ومن سجّل المصروف.
  * كل عنصر ملخص جرد كامل بصيغة «جرد المستخدم» (مع تفصيل منتجاته) — يُطبع ورقةً مستقلة.
  */
-const groupByUser = (orders, expenses) => {
+const groupByUser = (orders, expenses, collections = []) => {
   const groups = new Map();
   for (const o of orders) {
     const key = o.handledBy ? String(o.handledBy) : '';
-    if (!groups.has(key)) groups.set(key, { name: o.handledByName || '', orders: [], expenses: [] });
+    if (!groups.has(key)) groups.set(key, { name: o.handledByName || '', orders: [], expenses: [], collections: [] });
     groups.get(key).orders.push(o);
   }
   for (const e of expenses) {
     const key = String(e.createdBy);
-    if (!groups.has(key)) groups.set(key, { name: e.createdByName || '', orders: [], expenses: [] });
+    if (!groups.has(key)) groups.set(key, { name: e.createdByName || '', orders: [], expenses: [], collections: [] });
     const g = groups.get(key);
     g.expenses.push(e);
     if (!g.name) g.name = e.createdByName || '';
+  }
+  for (const r of collections) {
+    const key = r.paidBy ? String(r.paidBy) : '';
+    if (!groups.has(key)) groups.set(key, { name: r.paidByName || '', orders: [], expenses: [], collections: [] });
+    groups.get(key).collections.push(r);
   }
   return [...groups.entries()].map(([userId, g]) => ({
     userId: userId || null,
     name: userId ? g.name || 'مستخدم' : 'بلا مستخدم بعد',
     orders: g.orders,
     expenses: g.expenses,
+    collections: g.collections,
   }));
 };
 
 /** ملخصات المستخدمين داخل جرد المطعم كاملاً — من له عملية فعلية فقط. */
-const userSummaries = (orders, expenses) =>
-  groupByUser(orders, expenses)
-    .map((g) => ({ userId: g.userId, userName: g.name, scope: 'mine', ...summarizeOrders(g.orders, g.expenses) }))
-    .filter((u) => u.successCount || u.cancelledCount || u.expensesCount)
+const userSummaries = (orders, expenses, collections = []) =>
+  groupByUser(orders, expenses, collections)
+    .map((g) => ({ userId: g.userId, userName: g.name, scope: 'mine', ...summarizeOrders(g.orders, g.expenses, null, g.collections) }))
+    .filter((u) => u.successCount || u.cancelledCount || u.expensesCount || u.collectionsCount)
     .sort((a, b) => b.successTotal - a.successTotal);
 
 const getShiftOverview = async (req, res) => {
@@ -1274,18 +1300,19 @@ const closeShift = async (req, res) => {
     if (!ok) return res.status(401).json({ message: 'كلمة المرور غير صحيحة' });
 
     const scope = resolveScope(req.user, req.body.scope);
-    const [orders, expenses, delivery] = await Promise.all([
+    const [orders, expenses, delivery, collections] = await Promise.all([
       Order.find(shiftFilter(req.user, scope, brand)).lean(),
       Expense.find(expenseFilter(req.user, scope)).lean(),
       loadDeliveryLedger(req.user, scope, brand),
+      loadCollections(req.user, scope),
     ]);
-    if (orders.length === 0 && expenses.length === 0 && !(delivery && delivery.length)) {
+    if (orders.length === 0 && expenses.length === 0 && !collections.length && !(delivery && delivery.length)) {
       return res.status(400).json({ message: 'لا توجد طلبات ولا مصروفات لإغلاقها حالياً' });
     }
 
-    const summary = summarizeOrders(orders, expenses, delivery);
+    const summary = summarizeOrders(orders, expenses, delivery, collections);
     // جرد المطعم كاملاً = جرد لكل مستخدم داخله، يُطبع لكلٍّ ورقة مستقلة
-    if (scope === 'all') summary.byUser = userSummaries(orders, expenses);
+    if (scope === 'all') summary.byUser = userSummaries(orders, expenses, collections);
     /* الدورة: جرد المستخدم يُغلق دورته المفتوحة (تُفتح الآن إن لم يفتحها)، فيبقى
        المعرّف نفسه من الفتح إلى الإغلاق. جرد المطعم كاملاً دورة مستقلة. */
     const openSession = scope === 'all' ? null : await ensureOpenSession(req.user, { auto: true });
@@ -1341,6 +1368,15 @@ const closeShift = async (req, res) => {
       }
     } catch (e) {
       console.error('حفظ دورة الجرد تعذّر:', e.message); // الإغلاق نفسه تمّ — لا نُفشله
+    }
+    // التحصيلات دخلت هذا الجرد: تُؤرشف فلا تُحسب مرة ثانية
+    if (collections.length) {
+      try {
+        await require('../models/Receivable').updateMany(
+          { _id: { $in: collections.map((r) => r._id) }, collectionClosed: { $ne: true } },
+          { $set: { collectionClosed: true, collectionShiftId: shiftId } }
+        );
+      } catch (e) { console.error('أرشفة تحصيل الذمم تعذّرت:', e.message); }
     }
     logActivity({ req, action: 'shift.close', amount: summary.successTotal, details: { shiftId, scope, ordersCount: summary.successCount } });
     try { realtime.emitShiftClosed(shiftId, scope); } catch (_) { /* البث لا يُفشل الإغلاق */ }
