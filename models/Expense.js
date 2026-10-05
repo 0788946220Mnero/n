@@ -20,6 +20,10 @@ const expenseSchema = new mongoose.Schema(
     employeeName: { type: String, default: '' },
     kind: { type: String, enum: ['general', 'salary', 'advance', 'bonus', 'other'], default: 'general' },
     spentAt: { type: Date, default: null }, // تاريخ الصرف الفعلي (افتراضياً لحظة التسجيل)
+    // اعتماد مدير النظام لصرف الموظف: اسمه وتوقيعه منسوخان لحظة الاعتماد (إعادة الطباعة تُظهر نفس التوقيع)
+    approvedByName: { type: String, default: '' },
+    approvedAt: { type: Date, default: null },
+    approvedSignature: { type: String, default: '' },
     brand: { type: String, default: 'diyar' },
 
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },

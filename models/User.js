@@ -15,6 +15,8 @@ const userSchema = new mongoose.Schema(
       default: 'employee',
     },
     permissions: [{ type: String }], // مثال: ['products:edit', 'orders:view']
+    // توقيع مدير النظام (صورة PNG) — يُطبع على سندات صرف الموظفين. لا يُرسل في قوائم المستخدمين.
+    signature: { type: String, default: '', select: false },
     isActive: { type: Boolean, default: true },
     refreshToken: { type: String, select: false },
     // جلسة واحدة لكل مستخدم: يتجدد مع كل تسجيل دخول ويُختم داخل الرموز.

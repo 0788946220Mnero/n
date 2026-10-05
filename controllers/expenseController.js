@@ -6,6 +6,33 @@ const nameOf = (u) => (u && (u.name || u.username)) || '';
 const isManager = (u) => !!u && ['admin', 'manager'].includes(u.role);
 
 /** رقم سند تسلسلي ذرّي — لا يتكرر حتى مع تسجيلين في نفس اللحظة. */
+/** توقيع صالح: صورة PNG صغيرة (data URL) — لا نصوص ولا ملفات كبيرة. */
+const validSignature = (s) => /^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(s) && s.length <= 300000;
+
+// GET/PUT /api/expenses/signature — توقيع مدير النظام المحفوظ (لمدير النظام فقط)
+const getSignature = async (req, res) => {
+  if (req.user.role !== 'admin') return res.status(403).json({ message: 'لمدير النظام فقط' });
+  const me = await require('../models/User').findById(req.user._id).select('+signature').lean();
+  res.json({ success: true, signature: (me && me.signature) || '' });
+};
+const setSignature = async (req, res) => {
+  if (req.user.role !== 'admin') return res.status(403).json({ message: 'لمدير النظام فقط' });
+  const sig = String((req.body && req.body.signature) || '');
+  if (sig && !validSignature(sig)) return res.status(400).json({ message: 'صورة التوقيع غير صالحة' });
+  await require('../models/User').updateOne({ _id: req.user._id }, { $set: { signature: sig } });
+  res.json({ success: true });
+};
+
+// GET /api/expenses/:id — السند كاملاً للطباعة (مع توقيع الاعتماد)
+const getExpense = async (req, res) => {
+  const mongoose = require('mongoose');
+  if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(400).json({ message: 'معرّف غير صالح' });
+  const e = await Expense.findById(req.params.id).lean();
+  if (!e) return res.status(404).json({ message: 'السند غير موجود' });
+  if (!isManager(req.user) && String(e.createdBy) !== String(req.user._id)) return res.status(403).json({ message: 'ليس لديك صلاحية' });
+  res.json({ success: true, expense: e });
+};
+
 const nextNumber = async () => {
   // تسجيلان متزامنان عند أول إنشاء للعدّاد قد يتصادمان على _id (خطأ 11000
   // معروف مع upsert)؛ المحاولة الثانية تجده موجوداً فتزيده فقط
@@ -51,10 +78,25 @@ const createExpense = async (req, res) => {
     }
   }
 
-  // ── موظف (اختياري) ──
+  // ── موظف (اختياري) — صرف الموظفين لمدير النظام وحده، وبتوقيعه ──
   let employee = null;
+  let signature = '';
   const empId = req.body && req.body.employee;
   if (empId) {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ message: 'صرف مبالغ الموظفين من صلاحية مدير النظام فقط' });
+    }
+    const User = require('../models/User');
+    const sent = String((req.body && req.body.signature) || '');
+    if (sent) {
+      if (!validSignature(sent)) return res.status(400).json({ message: 'صورة التوقيع غير صالحة' });
+      signature = sent;
+      await User.updateOne({ _id: req.user._id }, { $set: { signature } }); // يُحفظ للسندات القادمة
+    } else {
+      const me = await User.findById(req.user._id).select('+signature').lean();
+      signature = (me && me.signature) || '';
+    }
+    if (!signature) return res.status(400).json({ code: 'SIGNATURE_REQUIRED', message: 'وقّع على السند أولاً — توقيع مدير النظام مطلوب لصرف الموظفين' });
     if (!require('mongoose').Types.ObjectId.isValid(empId)) return res.status(400).json({ message: 'موظف غير صالح' });
     employee = await require('../models/Employee').findById(empId).lean();
     if (!employee) return res.status(400).json({ message: 'الموظف غير موجود' });
@@ -80,6 +122,7 @@ const createExpense = async (req, res) => {
     employeeName: employee ? employee.name : '',
     kind,
     spentAt,
+    ...(employee ? { approvedByName: nameOf(req.user), approvedAt: new Date(), approvedSignature: signature } : {}),
     paidTo: String((req.body && req.body.paidTo) || (employee ? employee.name : '')).trim().slice(0, 80),
     brand: (req.body && req.body.brand) || 'diyar',
     createdBy: req.user._id,
@@ -103,7 +146,7 @@ const listExpenses = async (req, res) => {
   const all = req.query.scope === 'all' && isManager(req.user);
   if (!all) filter.createdBy = req.user._id;
 
-  const expenses = await Expense.find(filter).sort({ createdAt: -1 }).limit(200).lean();
+  const expenses = await Expense.find(filter).select('-approvedSignature').sort({ createdAt: -1 }).limit(200).lean();
   res.json({ success: true, expenses, scope: all ? 'all' : 'mine' });
 };
 
@@ -168,7 +211,7 @@ const logExpenses = async (req, res) => {
   }
 
   const [data, total, sums] = await Promise.all([
-    Expense.find(f).sort({ createdAt: -1 }).skip((page - 1) * limit).limit(limit).lean(),
+    Expense.find(f).select('-approvedSignature').sort({ createdAt: -1 }).skip((page - 1) * limit).limit(limit).lean(),
     Expense.countDocuments(f),
     // المجموع لا يشمل الملغاة (تبقى ظاهرة للمراجعة فقط)
     // فلتر «ملغاة» مجموعه صفر بطبيعته — لا نكتب شرط «غير ملغى» فوق شرطه
@@ -185,4 +228,4 @@ const logExpenses = async (req, res) => {
   });
 };
 
-module.exports = wrapAll({ createExpense, listExpenses, voidExpense, logExpenses });
+module.exports = wrapAll({ createExpense, listExpenses, voidExpense, logExpenses, getSignature, setSignature, getExpense });

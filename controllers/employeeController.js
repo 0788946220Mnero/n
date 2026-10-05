@@ -74,7 +74,7 @@ const employeePayments = async (req, res) => {
   const limit = Math.min(200, Math.max(1, parseInt(req.query.limit, 10) || 50));
   const f = { employee: emp._id };
   const [data, total, live] = await Promise.all([
-    Expense.find(f).sort({ spentAt: -1, createdAt: -1 }).skip((page - 1) * limit).limit(limit).lean(),
+    Expense.find(f).select('-approvedSignature').sort({ spentAt: -1, createdAt: -1 }).skip((page - 1) * limit).limit(limit).lean(),
     Expense.countDocuments(f),
     Expense.find({ ...f, voided: { $ne: true } }).select('amount kind spentAt createdAt').lean(),
   ]);
