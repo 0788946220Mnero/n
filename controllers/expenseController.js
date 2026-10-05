@@ -36,23 +36,70 @@ const createExpense = async (req, res) => {
   }
   if (amount > 100000) return res.status(400).json({ message: 'قيمة المصروف غير منطقية' });
 
+  // ── المصدر: الصندوق (افتراضي) أو رأس المال ──
+  const source = req.body && req.body.source === 'capital' ? 'capital' : 'drawer';
+  const { hasPermission } = require('../middlewares/permission');
+  const CapitalEntry = require('../models/CapitalEntry');
+  if (source === 'capital') {
+    if (!hasPermission(req.user, 'capital:manage')) {
+      return res.status(403).json({ message: 'الصرف من رأس المال يحتاج صلاحية «رأس المال»' });
+    }
+    const all = await CapitalEntry.find({ voided: { $ne: true } }).select('type amount').lean();
+    const balance = all.reduce((t, e) => t + CapitalEntry.signed(e), 0);
+    if (amount > balance + 1e-9) {
+      return res.status(400).json({ message: `رصيد رأس المال (${balance.toFixed(3)}) لا يكفي لهذا الصرف` });
+    }
+  }
+
+  // ── موظف (اختياري) ──
+  let employee = null;
+  const empId = req.body && req.body.employee;
+  if (empId) {
+    if (!require('mongoose').Types.ObjectId.isValid(empId)) return res.status(400).json({ message: 'موظف غير صالح' });
+    employee = await require('../models/Employee').findById(empId).lean();
+    if (!employee) return res.status(400).json({ message: 'الموظف غير موجود' });
+  }
+  const kind = employee
+    ? (['salary', 'advance', 'bonus', 'other'].includes(req.body.kind) ? req.body.kind : 'other')
+    : 'general';
+
+  // تاريخ الصرف: لا مستقبلي، ولا أقدم من سنة
+  let spentAt = new Date();
+  if (req.body && req.body.spentAt) {
+    const t = new Date(req.body.spentAt);
+    const now = Date.now();
+    if (!isNaN(t) && t.getTime() <= now + 60000 && t.getTime() >= now - 366 * 86400000) spentAt = t;
+  }
+
   const expense = await Expense.create({
     number: await nextNumber(),
     name,
     amount: Number(amount.toFixed(3)),
-    paidTo: String((req.body && req.body.paidTo) || '').trim().slice(0, 80),
+    source,
+    employee: employee ? employee._id : null,
+    employeeName: employee ? employee.name : '',
+    kind,
+    spentAt,
+    paidTo: String((req.body && req.body.paidTo) || (employee ? employee.name : '')).trim().slice(0, 80),
     brand: (req.body && req.body.brand) || 'diyar',
     createdBy: req.user._id,
     createdByName: nameOf(req.user),
   });
 
+  if (source === 'capital') {
+    await CapitalEntry.create({
+      type: 'expense', amount: expense.amount, note: name, date: spentAt,
+      expense: expense._id, expenseNumber: expense.number,
+      createdBy: req.user._id, createdByName: nameOf(req.user),
+    });
+  }
   console.log(`💸 مصروف #${expense.number} «${name}» ${expense.amount} د.أ بواسطة ${req.user.username}`);
   res.status(201).json({ success: true, expense });
 };
 
 // GET /api/expenses?scope=mine|all — مصروفات الجرد المفتوح
 const listExpenses = async (req, res) => {
-  const filter = { closed: { $ne: true } };
+  const filter = { closed: { $ne: true }, source: { $ne: 'capital' } }; // مصروفات الجرد (الصندوق) فقط
   const all = req.query.scope === 'all' && isManager(req.user);
   if (!all) filter.createdBy = req.user._id;
 
@@ -68,7 +115,7 @@ const voidExpense = async (req, res) => {
 
   const expense = await Expense.findById(req.params.id);
   if (!expense) return res.status(404).json({ message: 'المصروف غير موجود' });
-  if (expense.closed) return res.status(400).json({ message: 'أُغلق جرد هذا المصروف، فلا يمكن إلغاؤه' });
+  if (expense.closed && expense.source !== 'capital') return res.status(400).json({ message: 'أُغلق جرد هذا المصروف، فلا يمكن إلغاؤه' });
   if (expense.voided) return res.status(400).json({ message: 'المصروف ملغى مسبقاً' });
 
   require('../utils/activity').logActivity({ req, action: 'expense.void', amount: expense.amount, details: { name: expense.name, number: expense.number } });
@@ -76,6 +123,13 @@ const voidExpense = async (req, res) => {
   expense.voidedByName = nameOf(req.user);
   expense.voidedAt = new Date();
   await expense.save();
+  if (expense.source === 'capital') {
+    // حركة رأس المال المرتبطة تُلغى فيعود المبلغ للرصيد
+    await require('../models/CapitalEntry').updateMany(
+      { expense: expense._id, voided: { $ne: true } },
+      { $set: { voided: true, voidedAt: new Date(), voidedByName: nameOf(req.user) } }
+    );
+  }
 
   res.json({ success: true, expense });
 };
@@ -100,10 +154,13 @@ const logExpenses = async (req, res) => {
     if (ymd(req.query.from)) f.createdAt.$gte = day(req.query.from);
     if (ymd(req.query.to)) f.createdAt.$lt = new Date(day(req.query.to).getTime() + 86400000);
   }
-  if (req.query.status === 'open') { f.closed = { $ne: true }; f.voided = { $ne: true }; }
+  if (req.query.status === 'open') { f.closed = { $ne: true }; f.voided = { $ne: true }; f.source = { $ne: 'capital' }; }
   if (req.query.status === 'closed') { f.closed = true; f.voided = { $ne: true }; }
   if (req.query.status === 'voided') f.voided = true;
   if (req.query.shiftId) f.shiftId = String(req.query.shiftId).trim();
+  if (['drawer', 'capital'].includes(req.query.source)) f.source = req.query.source === 'drawer' ? { $ne: 'capital' } : 'capital';
+  if (req.query.employee && mongoose.Types.ObjectId.isValid(req.query.employee)) f.employee = new mongoose.Types.ObjectId(req.query.employee);
+  if (req.query.kind && ['general', 'salary', 'advance', 'bonus', 'other'].includes(req.query.kind)) f.kind = req.query.kind;
   if (req.query.q) {
     const q = String(req.query.q).trim();
     const rx = { $regex: q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), $options: 'i' };

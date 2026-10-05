@@ -31,13 +31,16 @@ const PERMISSIONS = [
   { key: 'delivery:mapManage', label: 'إدارة خريطة التوصيل: إزالة الطلبات العالقة من جرد سابق' },
   { key: 'receivables:manage', label: 'ذمم الموردين: تسجيل فواتير الموردين وتسديدها وطباعتها (الإزالة لمدير النظام فقط)' },
   { key: 'supplies:manage', label: 'قائمة البضائع المطلوبة للمطعم' },
+  { key: 'capital:manage', label: 'رأس المال: الرصيد والإيداع والسحب والصرف منه' },
+  { key: 'employees:manage', label: 'الموظفون: سجلّهم وصرف رواتبهم وسلفهم' },
 ];
 
 const ALL_KEYS = PERMISSIONS.map((p) => p.key);
 
 const ROLE_PERMISSIONS = {
   admin: [...ALL_KEYS],
-  manager: ALL_KEYS.filter((k) => k !== 'users:manage'),
+  // رأس المال لمدير النظام وحده افتراضياً (يُمنح لغيره من «المستخدمون» عند الحاجة)
+  manager: ALL_KEYS.filter((k) => !['users:manage', 'capital:manage'].includes(k)),
   cashier: [
     'orders:view',
     'orders:manage',

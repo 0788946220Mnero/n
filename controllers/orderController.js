@@ -1153,7 +1153,8 @@ const summarizeOrders = (orders, expenses = [], delivery = null, collections = [
 
 /** مصروفات جرد مفتوح: لصاحبها، أو للمطعم كله بنطاق المدير. */
 const expenseFilter = (user, scope) => {
-  const f = { closed: { $ne: true } };
+  // مصروفات رأس المال لم تخرج من الدرج: لا تدخل أي جرد
+  const f = { closed: { $ne: true }, source: { $ne: 'capital' } };
   if (scope !== 'all') f.createdBy = user._id;
   return f;
 };

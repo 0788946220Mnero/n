@@ -13,6 +13,13 @@ const expenseSchema = new mongoose.Schema(
     name: { type: String, required: true, trim: true, maxlength: 120 },
     amount: { type: Number, required: true, min: 0.001, max: 100000 },
     paidTo: { type: String, default: '', trim: true, maxlength: 80 }, // «صرفنا إلى» في سند الصرف
+    // من أين صُرف: drawer صندوق الكاشير (يدخل جرده) | capital رأس المال (لا يدخل أي جرد)
+    source: { type: String, enum: ['drawer', 'capital'], default: 'drawer', index: true },
+    // صرف لموظف: راتب، سلفة، مكافأة… (يُحفظ في سجل الموظف)
+    employee: { type: mongoose.Schema.Types.ObjectId, ref: 'Employee', default: null, index: true },
+    employeeName: { type: String, default: '' },
+    kind: { type: String, enum: ['general', 'salary', 'advance', 'bonus', 'other'], default: 'general' },
+    spentAt: { type: Date, default: null }, // تاريخ الصرف الفعلي (افتراضياً لحظة التسجيل)
     brand: { type: String, default: 'diyar' },
 
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
