@@ -48,6 +48,10 @@ const createJob = async (req, res) => {
     expense = await Expense.findById(expenseId).lean();
     if (!expense) return res.status(404).json({ message: 'المصروف غير موجود' });
     if (expense.voided) return res.status(400).json({ message: 'المصروف ملغى' });
+    // غير الكاشير فما فوق (دخل بصلاحية «صرف للموظفين»): سندات الموظفين فقط
+    if (!['admin', 'manager', 'cashier'].includes(req.user.role) && !expense.employee) {
+      return res.status(403).json({ message: 'ليس لديك صلاحية لطباعة هذا السند' });
+    }
   }
 
   const job = await PrintJob.create({

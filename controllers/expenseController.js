@@ -30,7 +30,11 @@ const getExpense = async (req, res) => {
   if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(400).json({ message: 'معرّف غير صالح' });
   const e = await Expense.findById(req.params.id).lean();
   if (!e) return res.status(404).json({ message: 'السند غير موجود' });
-  if (!isManager(req.user) && String(e.createdBy) !== String(req.user._id)) return res.status(403).json({ message: 'ليس لديك صلاحية' });
+  const { hasPermission } = require('../middlewares/permission');
+  const employeeVoucher = !!e.employee && (hasPermission(req.user, 'employees:pay') || hasPermission(req.user, 'employees:manage'));
+  if (!isManager(req.user) && String(e.createdBy) !== String(req.user._id) && !employeeVoucher) {
+    return res.status(403).json({ message: 'ليس لديك صلاحية' });
+  }
   res.json({ success: true, expense: e });
 };
 
