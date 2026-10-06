@@ -9,14 +9,15 @@ const isManager = (u) => !!u && ['admin', 'manager'].includes(u.role);
 /** توقيع صالح: صورة PNG صغيرة (data URL) — لا نصوص ولا ملفات كبيرة. */
 const validSignature = (s) => /^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(s) && s.length <= 300000;
 
-// GET/PUT /api/expenses/signature — توقيع مدير النظام المحفوظ (لمدير النظام فقط)
+// GET/PUT /api/expenses/signature — توقيع المستخدم المحفوظ (لمن يملك الصرف للموظفين)
+const canPayEmployees = (u) => require('../middlewares/permission').hasPermission(u, 'employees:pay');
 const getSignature = async (req, res) => {
-  if (req.user.role !== 'admin') return res.status(403).json({ message: 'لمدير النظام فقط' });
+  if (!canPayEmployees(req.user)) return res.status(403).json({ message: 'لمن يملك صلاحية الصرف للموظفين' });
   const me = await require('../models/User').findById(req.user._id).select('+signature').lean();
   res.json({ success: true, signature: (me && me.signature) || '' });
 };
 const setSignature = async (req, res) => {
-  if (req.user.role !== 'admin') return res.status(403).json({ message: 'لمدير النظام فقط' });
+  if (!canPayEmployees(req.user)) return res.status(403).json({ message: 'لمن يملك صلاحية الصرف للموظفين' });
   const sig = String((req.body && req.body.signature) || '');
   if (sig && !validSignature(sig)) return res.status(400).json({ message: 'صورة التوقيع غير صالحة' });
   await require('../models/User').updateOne({ _id: req.user._id }, { $set: { signature: sig } });
@@ -83,8 +84,9 @@ const createExpense = async (req, res) => {
   let signature = '';
   const empId = req.body && req.body.employee;
   if (empId) {
-    if (req.user.role !== 'admin') {
-      return res.status(403).json({ message: 'صرف مبالغ الموظفين من صلاحية مدير النظام فقط' });
+    // صلاحية «صرف للموظفين»: لمدير النظام دائماً، ولمن يمنحه إياها
+    if (!hasPermission(req.user, 'employees:pay')) {
+      return res.status(403).json({ message: 'ليس لديك صلاحية الصرف للموظفين — يمنحها مدير النظام من «المستخدمون»' });
     }
     const User = require('../models/User');
     const sent = String((req.body && req.body.signature) || '');
@@ -96,7 +98,7 @@ const createExpense = async (req, res) => {
       const me = await User.findById(req.user._id).select('+signature').lean();
       signature = (me && me.signature) || '';
     }
-    if (!signature) return res.status(400).json({ code: 'SIGNATURE_REQUIRED', message: 'وقّع على السند أولاً — توقيع مدير النظام مطلوب لصرف الموظفين' });
+    if (!signature) return res.status(400).json({ code: 'SIGNATURE_REQUIRED', message: 'وقّع على السند أولاً — توقيع من يصرف مطلوب لصرف الموظفين' });
     if (!require('mongoose').Types.ObjectId.isValid(empId)) return res.status(400).json({ message: 'موظف غير صالح' });
     employee = await require('../models/Employee').findById(empId).lean();
     if (!employee) return res.status(400).json({ message: 'الموظف غير موجود' });
@@ -122,7 +124,7 @@ const createExpense = async (req, res) => {
     employeeName: employee ? employee.name : '',
     kind,
     spentAt,
-    ...(employee ? { approvedByName: nameOf(req.user), approvedAt: new Date(), approvedSignature: signature } : {}),
+    ...(employee ? { approvedByName: nameOf(req.user), approvedByRole: req.user.role || '', approvedAt: new Date(), approvedSignature: signature } : {}),
     paidTo: String((req.body && req.body.paidTo) || (employee ? employee.name : '')).trim().slice(0, 80),
     brand: (req.body && req.body.brand) || 'diyar',
     createdBy: req.user._id,

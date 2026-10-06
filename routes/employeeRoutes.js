@@ -5,9 +5,11 @@ const { requirePermission } = require('../middlewares/permission');
 const c = require('../controllers/employeeController');
 
 const can = requirePermission('employees:manage');
-router.get('/', protect, can, c.listEmployees);
+// من يصرف يحتاج قائمة الموظفين وسجل صرفهم، دون إضافتهم أو تعديلهم
+const canSee = requirePermission('employees:manage', 'employees:pay');
+router.get('/', protect, canSee, c.listEmployees);
 router.post('/', protect, can, c.createEmployee);
 router.put('/:id', protect, can, c.updateEmployee);
-router.get('/:id/payments', protect, can, c.employeePayments);
+router.get('/:id/payments', protect, canSee, c.employeePayments);
 
 module.exports = router;

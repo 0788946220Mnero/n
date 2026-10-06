@@ -22,6 +22,7 @@ const expenseSchema = new mongoose.Schema(
     spentAt: { type: Date, default: null }, // تاريخ الصرف الفعلي (افتراضياً لحظة التسجيل)
     // اعتماد مدير النظام لصرف الموظف: اسمه وتوقيعه منسوخان لحظة الاعتماد (إعادة الطباعة تُظهر نفس التوقيع)
     approvedByName: { type: String, default: '' },
+    approvedByRole: { type: String, default: '' }, // admin = «اعتمده مدير النظام»
     approvedAt: { type: Date, default: null },
     approvedSignature: { type: String, default: '' },
     brand: { type: String, default: 'diyar' },

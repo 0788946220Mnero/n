@@ -32,7 +32,8 @@ const PERMISSIONS = [
   { key: 'receivables:manage', label: 'ذمم الموردين: تسجيل فواتير الموردين وتسديدها وطباعتها (الإزالة لمدير النظام فقط)' },
   { key: 'supplies:manage', label: 'قائمة البضائع المطلوبة للمطعم' },
   { key: 'capital:manage', label: 'رأس المال: الرصيد والإيداع والسحب والصرف منه' },
-  { key: 'employees:manage', label: 'الموظفون: سجلّهم وصرف رواتبهم وسلفهم' },
+  { key: 'employees:manage', label: 'الموظفون: إضافتهم وتعديلهم وكشوف حساباتهم' },
+  { key: 'employees:pay', label: 'صرف للموظفين: رواتب وسلف ومكافآت (بتوقيع من يصرف)' },
 ];
 
 const ALL_KEYS = PERMISSIONS.map((p) => p.key);
@@ -40,7 +41,8 @@ const ALL_KEYS = PERMISSIONS.map((p) => p.key);
 const ROLE_PERMISSIONS = {
   admin: [...ALL_KEYS],
   // رأس المال لمدير النظام وحده افتراضياً (يُمنح لغيره من «المستخدمون» عند الحاجة)
-  manager: ALL_KEYS.filter((k) => !['users:manage', 'capital:manage'].includes(k)),
+  // رأس المال وصرف الموظفين: لمدير النظام افتراضياً، ويُمنحان لغيره من «المستخدمون»
+  manager: ALL_KEYS.filter((k) => !['users:manage', 'capital:manage', 'employees:pay'].includes(k)),
   cashier: [
     'orders:view',
     'orders:manage',
