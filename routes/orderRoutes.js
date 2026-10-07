@@ -54,6 +54,11 @@ router.post('/close-shift', protect, authorize('admin', 'manager', 'cashier'), c
 router.post('/track', trackLimiter, trackBatch);
 router.get('/track/:id', trackLimiter, trackOrder);
 router.get('/my', requireCustomer, myOrders);
+// رسالة الزبون على طلبه (تذكير/ملاحظة/إضافة أصناف) — برمز التتبع، وبحد أشد
+const { createRequest, resolveRequest } = require('../controllers/orderRequestController');
+const requestLimiter = rateLimit({ windowMs: 60 * 1000, max: 12, standardHeaders: true, legacyHeaders: false,
+  message: { success: false, message: 'رسائل كثيرة خلال وقت قصير — انتظر دقيقة' } });
+router.post('/track/:id/request', requestLimiter, createRequest);
 
 // المندوبون: القائمة قبل /:id حتى لا تُفسَّر «drivers» معرّفاً
 router.get('/drivers', protect, getDrivers);
@@ -67,5 +72,7 @@ router.put('/:id/status', protect, authorize('admin', 'manager', 'cashier'), upd
 router.put('/:id/driver', protect, requirePermission('delivery:manage', 'orders:manage'), assignDriver);
 router.post('/:id/delivery-sent', protect, requirePermission('delivery:manage', 'orders:manage'), markDeliverySent);
 router.put('/:id/payment', protect, requirePermission('orders:manage'), setPaymentMethod);
+// الرد على رسائل الزبون: قبول الإضافة يغيّر الفاتورة → نفس من يغيّر حالة الطلب
+router.put('/:id/requests/:rid', protect, authorize('admin', 'manager', 'cashier'), resolveRequest);
 
 module.exports = router;

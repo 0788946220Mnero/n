@@ -5,6 +5,10 @@ const { deliveryState } = require('./deliveryState');
  * ما يراه الزبون من طلبه — بلا بيانات إدارية: لا أسماء موظفين، لا جرد،
  * لا ملاحظات داخلية، لا رمز التتبع نفسه، ولا هاتف/عنوان (يعرفهما الزبون).
  */
+// حالات يُسمح فيها للزبون بمراسلة المطعم، وبإضافة أصناف لنفس الطلب
+const REQ_ACTIVE = ['pending', 'new', 'preparing', 'ready', 'out_for_delivery'];
+const REQ_ADDABLE = ['pending', 'new', 'preparing'];
+
 const publicOrder = (o) => {
   if (!o) return null;
   const isDelivery = o.orderType === 'delivery' && o.source !== 'pos';
@@ -38,6 +42,27 @@ const publicOrder = (o) => {
       cancelledAt: at(o.cancelledAt),
     },
     timeline: (o.timeline || []).map((t) => ({ event: t.event, at: at(t.at) })),
+    // رسائل الزبون وردّ المطعم عليها (بلا أسماء موظفين)
+    requests: (o.customerRequests || []).map((r) => ({
+      id: String(r._id),
+      kind: r.kind,
+      text: r.text || '',
+      items: (r.items || []).map((i) => ({
+        name: i.nameAr || '', quantity: i.quantity || 1, price: Number(i.price || 0),
+        addons: (i.addons || []).map((a) => ({ name: a.name || '', price: Number(a.price || 0) })), notes: i.notes || '',
+      })),
+      amount: Number(r.amount || 0),
+      status: r.status,
+      reply: r.reply || '',
+      createdAt: at(r.createdAt),
+      resolvedAt: at(r.resolvedAt),
+    })),
+    // ما يستطيع الزبون فعله الآن (الخادم يتحقق مجدداً عند الإرسال)
+    can: {
+      message: !o.closed && REQ_ACTIVE.includes(o.status),
+      add: !o.closed && REQ_ADDABLE.includes(o.status),
+      nudge: !o.closed && o.status === 'pending',
+    },
     updatedAt: at(o.updatedAt),
   };
 };
@@ -49,4 +74,4 @@ const tokenMatches = (stored, given) => {
   return a.length > 0 && a.length === b.length && crypto.timingSafeEqual(a, b);
 };
 
-module.exports = { publicOrder, tokenMatches };
+module.exports = { publicOrder, tokenMatches, REQ_ACTIVE, REQ_ADDABLE };

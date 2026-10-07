@@ -14,6 +14,24 @@ const orderItemSchema = new mongoose.Schema(
   { _id: false }
 );
 
+/* رسالة الزبون على طلبه من صفحة التتبع (تصل للوحة التحكم لحظياً):
+   nudge تذكير بتأكيد الطلب | note ملاحظة | add أصناف إضافية على نفس الطلب.
+   الإضافة لا تدخل الطلب إلا بعد «قبول» الموظف — والسعر من الخادم. */
+const customerRequestSchema = new mongoose.Schema(
+  {
+    kind: { type: String, enum: ['nudge', 'note', 'add'], required: true },
+    text: { type: String, default: '', maxlength: 300 },
+    items: { type: [orderItemSchema], default: [] },
+    amount: { type: Number, default: 0 },
+    status: { type: String, enum: ['open', 'accepted', 'rejected', 'seen'], default: 'open' },
+    reply: { type: String, default: '', maxlength: 200 },
+    createdAt: { type: Date, default: Date.now },
+    resolvedAt: { type: Date, default: null },
+    resolvedByName: { type: String, default: '' },
+  },
+  { _id: true }
+);
+
 const orderSchema = new mongoose.Schema(
   {
     orderNumber: { type: String, required: true, unique: true },
@@ -97,6 +115,8 @@ const orderSchema = new mongoose.Schema(
         byName: String,
       },
     ],
+    // رسائل الزبون وطلبات الإضافة (حقل اختياري — الطلبات القديمة تبقى صالحة)
+    customerRequests: { type: [customerRequestSchema], default: undefined },
     printRequested: { type: Boolean, default: false },
     printed: { type: Boolean, default: false },
     printedAt: { type: Date, default: null },

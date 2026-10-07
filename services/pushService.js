@@ -243,5 +243,36 @@ const notifyCustomers = async ({ title, body, link = '', image = '' }) => {
   return { sent, failed, error };
 };
 
-module.exports = { isEnabled, sendToTokens, notifyNewOrder, notifyCustomers, toHttpsUrl, isDeadToken };
+/** رسالة زبون على طلبه (تذكير/ملاحظة/إضافة أصناف) — لأجهزة الموظفين أصحاب الطلبات. */
+const notifyOrderRequest = async (order, request) => {
+  if (!isEnabled()) return;
+  try {
+    const Device = require('../models/Device');
+    const User = require('../models/User');
+    const users = await User.find({ role: { $in: ['admin', 'manager', 'cashier', 'employee'] }, isActive: true }).select('_id');
+    const devices = await Device.find({ user: { $in: users.map((u) => u._id) }, isActive: true }).select('fcmToken');
+    const tokens = [...new Set(devices.map((d) => d.fcmToken).filter(Boolean))];
+    if (!tokens.length) return;
+    const title = {
+      nudge: `⏰ الزبون ينتظر تأكيد الطلب #${order.orderNumber}`,
+      note: `💬 ملاحظة من زبون الطلب #${order.orderNumber}`,
+      add: `➕ الزبون يريد إضافة أصناف للطلب #${order.orderNumber}`,
+    }[request.kind] || `رسالة على الطلب #${order.orderNumber}`;
+    const body = request.kind === 'add'
+      ? `${(request.items || []).map((i) => `${i.nameAr} ×${i.quantity}`).join('، ')} — ${Number(request.amount || 0).toFixed(2)} د.أ`
+      : (request.text || 'اضغط للمراجعة');
+    const result = await sendToTokens(tokens, {
+      title,
+      body: String(body).slice(0, 180),
+      data: { type: 'order.request', orderId: String(order._id), orderNumber: order.orderNumber, requestId: String(request._id), kind: request.kind },
+    });
+    if (result.invalidTokens.length) {
+      await Device.updateMany({ fcmToken: { $in: result.invalidTokens } }, { $set: { isActive: false } });
+    }
+  } catch (err) {
+    console.error('notifyOrderRequest error:', err.message);
+  }
+};
+
+module.exports = { isEnabled, sendToTokens, notifyNewOrder, notifyOrderRequest, notifyCustomers, toHttpsUrl, isDeadToken };
 

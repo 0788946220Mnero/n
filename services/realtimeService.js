@@ -204,6 +204,16 @@ const emitOrderStatusChanged = (order, previousStatus) => {
   });
   emitTracking(order);
 };
+/** رسالة زبون جديدة أو ردّ عليها: اللوحة تُنبَّه (صوت + شارة)، والزبون يرى الحالة. */
+const serializeRequest = (r) => ({
+  _id: String(r._id), kind: r.kind, text: r.text || '', amount: Number(r.amount || 0), status: r.status,
+  items: (r.items || []).map((i) => ({ nameAr: i.nameAr, quantity: i.quantity, price: i.price, addons: i.addons || [], notes: i.notes || '' })),
+  reply: r.reply || '', createdAt: r.createdAt, resolvedAt: r.resolvedAt || null, resolvedByName: r.resolvedByName || '',
+});
+const emitOrderRequest = (order, request) => {
+  broadcast('order.request', { order: serializeOrder(order), request: serializeRequest(request) });
+  emitTracking(order);
+};
 const emitOrderCancelled = (order) => { broadcast('order.cancelled', { order: serializeOrder(order) }); emitTracking(order); };
 
 /**
@@ -248,6 +258,7 @@ module.exports = {
   emitOrderUpdated,
   emitOrderStatusChanged,
   emitOrderCancelled,
+  emitOrderRequest,
   endOtherSessions,
   emitPrintJob,
   emitPrintJobUpdated,
