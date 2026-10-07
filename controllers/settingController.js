@@ -46,13 +46,13 @@ const updateSettings = async (req, res) => {
       'delivery',
     ];
 
-    /* خيارات العنوان: تنظيف (حتى 20 خياراً، 40 حرفاً لكلٍّ، بلا تكرار)،
+    /* خيارات العنوان: تنظيف (حتى 100 خيار، 40 حرفاً لكلٍّ، بلا تكرار)،
        وإن لم ترسلها نسخة لوحة أقدم تبقى المحفوظة كما هي (لا تُمسح). */
     if (req.body.delivery && typeof req.body.delivery === 'object') {
       const d = req.body.delivery;
       const prev = (settings.delivery && settings.delivery.toObject) ? settings.delivery.toObject() : (settings.delivery || {});
       if (Array.isArray(d.addressOptions)) {
-        d.addressOptions = [...new Set(d.addressOptions.map((x) => String(x || '').trim().slice(0, 40)).filter(Boolean))].slice(0, 20);
+        d.addressOptions = [...new Set(d.addressOptions.map((x) => String(x || '').trim().slice(0, 40)).filter(Boolean))].slice(0, 100);
       } else {
         d.addressOptions = prev.addressOptions || [];
       }
