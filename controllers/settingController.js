@@ -46,6 +46,20 @@ const updateSettings = async (req, res) => {
       'delivery',
     ];
 
+    /* خيارات العنوان: تنظيف (حتى 20 خياراً، 40 حرفاً لكلٍّ، بلا تكرار)،
+       وإن لم ترسلها نسخة لوحة أقدم تبقى المحفوظة كما هي (لا تُمسح). */
+    if (req.body.delivery && typeof req.body.delivery === 'object') {
+      const d = req.body.delivery;
+      const prev = (settings.delivery && settings.delivery.toObject) ? settings.delivery.toObject() : (settings.delivery || {});
+      if (Array.isArray(d.addressOptions)) {
+        d.addressOptions = [...new Set(d.addressOptions.map((x) => String(x || '').trim().slice(0, 40)).filter(Boolean))].slice(0, 20);
+      } else {
+        d.addressOptions = prev.addressOptions || [];
+      }
+      if (d.addressOptionRequired === undefined) d.addressOptionRequired = !!prev.addressOptionRequired;
+      d.addressOptionRequired = d.addressOptionRequired === true && d.addressOptions.length > 0;
+    }
+
     updatable.forEach((field) => {
       if (req.body[field] !== undefined) {
         let value = req.body[field];
@@ -435,6 +449,8 @@ const getDeliveryConfig = async (req, res) => {
       tier2Km: Number(d.tier2Km ?? 4),
       tier2PerKm: Number(d.tier2PerKm ?? 0.25),
       tier3PerKm: Number(d.tier3PerKm ?? 0.15),
+      addressOptions: Array.isArray(d.addressOptions) ? d.addressOptions : [],
+      addressOptionRequired: d.addressOptionRequired === true,
     });
   } catch (err) {
     res.status(500).json({ success: false, message: 'تعذّر جلب إعدادات التوصيل' });

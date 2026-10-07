@@ -53,6 +53,9 @@ const settingSchema = new mongoose.Schema(
       tier3PerKm: { type: Number, default: 0.15 },
       // 'straight' = مسافة جوية (Haversine) | 'road' = مسافة الطريق (تحتاج Routing API)
       distanceMode: { type: String, enum: ['straight', 'road'], default: 'straight' },
+      // شريط خيارات العنوان في موقع الزبائن (أحياء/مناطق) — يُدار من لوحة التحكم
+      addressOptions: { type: [String], default: [] },
+      addressOptionRequired: { type: Boolean, default: false }, // إلزام الزبون باختيار أحدها
     },
     location: { type: String, default: '' },
     facebook: { type: String, default: '' },
