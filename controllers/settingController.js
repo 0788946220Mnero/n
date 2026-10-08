@@ -58,6 +58,12 @@ const updateSettings = async (req, res) => {
       }
       if (d.addressOptionRequired === undefined) d.addressOptionRequired = !!prev.addressOptionRequired;
       d.addressOptionRequired = d.addressOptionRequired === true && d.addressOptions.length > 0;
+      // شرائح «حسب قيمة الطلب»: تنظيف، وإن لم ترسلها نسخة لوحة أقدم تبقى المحفوظة
+      const { cleanValueTiers } = require('../services/deliveryFeeService');
+      const prevTiers = prev.valueTiers && prev.valueTiers.length ? prev.valueTiers.map((t) => ({ minTotal: t.minTotal, fee: t.fee })) : undefined;
+      d.valueTiers = (Array.isArray(d.valueTiers) && cleanValueTiers(d.valueTiers)) || prevTiers || undefined;
+      if (d.valueTiers === undefined) delete d.valueTiers;
+      if (!['perKm', 'tiered', 'byValue'].includes(d.pricingMode)) d.pricingMode = prev.pricingMode || 'perKm';
     }
 
     updatable.forEach((field) => {
@@ -378,6 +384,7 @@ const deleteLogo = async (req, res) => {
 const getDeliveryQuote = async (req, res) => {
   try {
     const { latitude, longitude } = req.body;
+    const itemsTotal = Math.max(0, Number(req.body.itemsTotal) || 0);
     const settings = await getOrCreateSettings();
     const d = settings.delivery || {};
 
@@ -399,6 +406,7 @@ const getDeliveryQuote = async (req, res) => {
       customerLat: Number(latitude),
       customerLng: Number(longitude),
       settings: d,
+      itemsTotal,
     });
 
     if (!quote.ok) {
@@ -423,6 +431,9 @@ const getDeliveryQuote = async (req, res) => {
       isFree: quote.fee === 0,
       freeDistanceKm: Number(d.freeDistanceKm ?? 1),
       maxDistanceKm: quote.maxDistanceKm,
+      pricingMode: quote.pricingMode || d.pricingMode || 'perKm',
+      itemsTotal,
+      next: quote.next || null, // byValue: كم يضيف الزبون لتقلّ الرسوم
     });
   } catch (err) {
     console.error('getDeliveryQuote error:', err);
@@ -449,6 +460,7 @@ const getDeliveryConfig = async (req, res) => {
       tier2Km: Number(d.tier2Km ?? 4),
       tier2PerKm: Number(d.tier2PerKm ?? 0.25),
       tier3PerKm: Number(d.tier3PerKm ?? 0.15),
+      valueTiers: require('../services/deliveryFeeService').normalize(d).valueTiers,
       addressOptions: Array.isArray(d.addressOptions) ? d.addressOptions : [],
       addressOptionRequired: d.addressOptionRequired === true,
     });

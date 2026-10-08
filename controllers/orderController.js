@@ -311,6 +311,7 @@ const createOrder = async (req, res) => {
           customerLat: lat,
           customerLng: lng,
           settings: dcfg,
+          itemsTotal: computedItemsTotal, // «حسب قيمة الطلب»: من أسعار الخادم لا الجهاز
         });
 
         if (!quote.ok && quote.reason === 'OUT_OF_RANGE') {

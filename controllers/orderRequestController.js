@@ -167,7 +167,20 @@ const resolveRequest = async (req, res) => {
       const itemsTotal = round3(items.reduce((t, i) => t + Number(i.price || 0) * Number(i.quantity || 1), 0));
       set.items = items;
       set.itemsTotal = itemsTotal;
-      set.total = Number((itemsTotal + Number(order.deliveryFee || 0)).toFixed(2));
+      let deliveryFee = Number(order.deliveryFee || 0);
+      if (order.orderType === 'delivery' && order.source !== 'pos') {
+        try {
+          const st = await require('../models/Setting').findOne().lean();
+          const dcfg = (st && st.delivery) || {};
+          if (dcfg.pricingMode === 'byValue') {
+            // الرسوم تتبع القيمة الجديدة — ولا ترتفع بإضافة أصناف
+            const { feeForValue } = require('../services/deliveryFeeService');
+            deliveryFee = Math.min(deliveryFee, feeForValue(itemsTotal, dcfg).fee);
+            set.deliveryFee = deliveryFee;
+          }
+        } catch (_) { /* تبقى الرسوم كما هي */ }
+      }
+      set.total = Number((itemsTotal + deliveryFee).toFixed(2));
       set.timeline = [...(order.timeline || []), { event: 'items_added', at: new Date(), byName: nameOf(req.user) }].slice(-40);
     }
 
