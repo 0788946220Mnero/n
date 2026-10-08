@@ -6,6 +6,7 @@ const c = require('../controllers/receivableController');
 
 const can = requirePermission('receivables:manage');
 router.get('/', protect, can, c.listReceivables);
+router.get('/drawers', protect, can, c.listDrawers); // قبل /:id
 router.post('/', protect, can, c.createReceivable);
 router.get('/:id', protect, can, c.getReceivable);
 router.post('/:id/pay', protect, can, c.payReceivable);

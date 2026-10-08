@@ -20,7 +20,9 @@ const getCapital = async (req, res) => {
   const page = Math.max(1, parseInt(req.query.page, 10) || 1);
   const limit = Math.min(200, Math.max(1, parseInt(req.query.limit, 10) || 50));
   const f = {};
-  if (['deposit', 'withdraw', 'expense'].includes(req.query.type)) f.type = req.query.type;
+  if (['deposit', 'withdraw', 'expense', 'receivable'].includes(req.query.type)) f.type = req.query.type;
+  // out = كل ما خرج من رأس المال (سحب + سندات صرف + تسديد موردين)
+  else if (req.query.type === 'out') f.type = { $in: ['withdraw', 'expense', 'receivable'] };
   if (req.query.voided !== '1') f.voided = { $ne: true };
   if (isYmd(req.query.from) || isYmd(req.query.to)) {
     f.date = {};
@@ -35,10 +37,14 @@ const getCapital = async (req, res) => {
   ]);
   const inD = inRange.filter((e) => e.type === 'deposit').reduce((t, e) => t + e.amount, 0);
   const inW = inRange.filter((e) => e.type !== 'deposit').reduce((t, e) => t + e.amount, 0);
+  const byType = (t) => r3(inRange.filter((e) => e.type === t).reduce((s, e) => s + e.amount, 0));
   res.json({
     success: true,
     ...totals,
-    range: { deposits: r3(inD), withdrawals: r3(inW), net: r3(inD - inW), count: inRange.length },
+    range: {
+      deposits: r3(inD), withdrawals: r3(inW), net: r3(inD - inW), count: inRange.length,
+      withdraw: byType('withdraw'), expense: byType('expense'), receivable: byType('receivable'),
+    },
     data,
     pagination: { page, limit, total, pages: Math.ceil(total / limit) },
   });
@@ -74,6 +80,7 @@ const voidEntry = async (req, res) => {
   const e = await CapitalEntry.findById(req.params.id);
   if (!e || e.voided) return res.status(404).json({ message: 'الحركة غير موجودة أو ملغاة' });
   if (e.type === 'expense') return res.status(400).json({ message: 'هذه حركة سند صرف — ألغِ السند نفسه من «سجل المصروف»' });
+  if (e.type === 'receivable') return res.status(400).json({ message: 'هذا تسديد فاتورة مورّد — تراجع عن التسديد من «ذمم الموردين»' });
   e.voided = true; e.voidedAt = new Date(); e.voidedByName = nameOf(req.user);
   await e.save();
   logActivity({ req, action: 'capital.void', amount: e.amount, details: { name: e.note } });

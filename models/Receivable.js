@@ -36,6 +36,12 @@ const receivableSchema = new mongoose.Schema(
     paidBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null, index: true },
     paidByName: { type: String, default: '' },
     paymentMethod: { type: String, enum: ['cash', 'cliq', 'card', ''], default: '' },
+    // من أين خرج المال: drawer صندوق مستخدم (يدخل جرده) | capital رأس المال (لا يدخل أي جرد)
+    // السجلات القديمة بلا هذا الحقل = صندوق من سدّد
+    paySource: { type: String, enum: ['drawer', 'capital', ''], default: '' },
+    drawerUser: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null, index: true },
+    drawerUserName: { type: String, default: '' },
+    capitalEntry: { type: mongoose.Schema.Types.ObjectId, ref: 'CapitalEntry', default: null },
 
     // التسديد يدخل جرد من سدّد (مال خارج)، ويُؤرشف عند إغلاق جرده (كالمصروف)
     collectionClosed: { type: Boolean, default: false, index: true },

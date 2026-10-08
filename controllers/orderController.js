@@ -1046,8 +1046,10 @@ const productBreakdown = (orders) => {
 /** تسديدات ذمم الموردين غير المؤرشفة: لمن سدّدها، أو للمطعم كله في الجرد الكامل. */
 const loadCollections = (user, scope) => {
   const Receivable = require('../models/Receivable');
-  const f = { status: 'paid', deleted: { $ne: true }, collectionClosed: { $ne: true } };
-  if (scope !== 'all') f.paidBy = user._id;
+  // من رأس المال لم يخرج من أي درج: لا يدخل الجرد
+  const f = { status: 'paid', deleted: { $ne: true }, collectionClosed: { $ne: true }, paySource: { $ne: 'capital' } };
+  // صاحب الصندوق المختار؛ والسجلات القديمة (بلا اختيار) لمن سدّد
+  if (scope !== 'all') f.$or = [{ drawerUser: user._id }, { drawerUser: null, paidBy: user._id }];
   return Receivable.find(f).sort({ paidAt: 1 }).lean();
 };
 
@@ -1134,6 +1136,7 @@ const summarizeOrders = (orders, expenses = [], delivery = null, collections = [
       number: r.number || null, name: r.customerName || '', invoiceNumber: r.invoiceNumber || '',
       amount: Number(Number(r.amount || 0).toFixed(3)),
       method: r.paymentMethod || 'cash', by: r.paidByName || '', at: r.paidAt || null,
+      drawer: r.drawerUserName || r.paidByName || '',
     })),
     supplierPaymentsCount: (collections || []).length,
     supplierPaymentsTotal: Number((collections || []).reduce((t, r) => t + Number(r.amount || 0), 0).toFixed(3)),
@@ -1249,8 +1252,9 @@ const groupByUser = (orders, expenses, collections = []) => {
     if (!g.name) g.name = e.createdByName || '';
   }
   for (const r of collections) {
-    const key = r.paidBy ? String(r.paidBy) : '';
-    if (!groups.has(key)) groups.set(key, { name: r.paidByName || '', orders: [], expenses: [], collections: [] });
+    const owner = r.drawerUser || r.paidBy;
+    const key = owner ? String(owner) : '';
+    if (!groups.has(key)) groups.set(key, { name: (r.drawerUser ? r.drawerUserName : r.paidByName) || '', orders: [], expenses: [], collections: [] });
     groups.get(key).collections.push(r);
   }
   return [...groups.entries()].map(([userId, g]) => ({
