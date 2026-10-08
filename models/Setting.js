@@ -69,6 +69,9 @@ const settingSchema = new mongoose.Schema(
     tiktok: { type: String, default: '' },
     deliveryFee: { type: Number, default: 0 },
     minOrderAmount: { type: Number, default: 0 },
+    // خيارات ما يظهر على الفاتورة الرئيسية وعلى قسيمة المطبخ (مفاتيح عرض + حجم الخط)
+    invoiceSettings: { type: mongoose.Schema.Types.Mixed, default: undefined },
+    kitchenTicketSettings: { type: mongoose.Schema.Types.Mixed, default: undefined },
     // العرض المميز (بطاقة "عرض اليوم") — تُدار من لوحة التحكم
     specialOffer: {
       enabled: { type: Boolean, default: false },

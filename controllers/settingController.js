@@ -44,7 +44,24 @@ const updateSettings = async (req, res) => {
       'heroBackgroundEnabled', 'heroBackgroundType', 'heroBackgroundUrl',
       'specialOffer',
       'delivery',
+      'invoiceSettings', 'kitchenTicketSettings',
     ];
+
+    /* إعدادات الطباعة: مفاتيح show* منطقية فقط + حجم الخط + نص التذييل — لا شيء آخر يُخزَّن.
+       (كانت تُرسل من اللوحة ولا تُحفظ، فتعود للافتراضي بعد كل تحميل) */
+    ['invoiceSettings', 'kitchenTicketSettings'].forEach((key) => {
+      const v = req.body[key];
+      if (v === undefined) return;
+      if (!v || typeof v !== 'object' || Array.isArray(v)) { delete req.body[key]; return; }
+      const clean = {};
+      Object.keys(v).slice(0, 40).forEach((k) => {
+        if (/^show[A-Za-z]{1,30}$/.test(k)) clean[k] = v[k] === true;
+      });
+      const fs = Number(v.fontSize);
+      if (Number.isFinite(fs) && fs >= 10 && fs <= 60) clean.fontSize = Math.round(fs);
+      if (key === 'invoiceSettings' && typeof v.footerText === 'string') clean.footerText = v.footerText.trim().slice(0, 160);
+      req.body[key] = clean;
+    });
 
     /* خيارات العنوان: تنظيف (حتى 100 خيار، 40 حرفاً لكلٍّ، بلا تكرار)،
        وإن لم ترسلها نسخة لوحة أقدم تبقى المحفوظة كما هي (لا تُمسح). */
