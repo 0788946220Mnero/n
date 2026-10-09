@@ -39,7 +39,11 @@ const orderSchema = new mongoose.Schema(
     // القيمة الافتراضية 'diyar' تحافظ على كل الطلبات القديمة كما هي دون أي تغيير
     brand: { type: String, default: 'diyar', index: true },
     // مصدر الطلب: الموقع، أو تطبيق نقطة البيع (بيع مباشر على الكاشير)
-    source: { type: String, enum: ['web', 'pos', 'app'], default: 'web', index: true },
+    // center = «بيع سنتر»: طلب هاتفي أدخله موظف سنتر/مطعم باسم الزبون ورقمه
+    source: { type: String, enum: ['web', 'pos', 'app', 'center'], default: 'web', index: true },
+    centerBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null, index: true },
+    centerByName: { type: String, default: '' },
+    addressOption: { type: String, default: '' }, // المنطقة من خيارات العنوان (إن وُجدت)
     customer: { type: mongoose.Schema.Types.ObjectId, ref: 'Customer' },
     customerName: String,
     phone: String,

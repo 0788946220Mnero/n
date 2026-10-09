@@ -33,8 +33,12 @@ const createJob = async (req, res) => {
   // pos: بيع سفري من نقطة البيع في اللوحة — قصاصات وفاتورة وأقسام معاً
   if (type === 'confirm' || type === 'invoice' || type === 'pos') {
     if (!orderId) return res.status(400).json({ message: 'الطلب مطلوب لهذه الطباعة' });
-    order = await Order.findById(orderId).select('_id');
+    order = await Order.findById(orderId).select('_id source centerBy');
     if (!order) return res.status(404).json({ message: 'الطلب غير موجود' });
+    if (!['admin', 'manager', 'cashier'].includes(req.user.role)
+      && !(order.source === 'center' && String(order.centerBy) === String(req.user._id))) {
+      return res.status(403).json({ message: 'ليس لديك صلاحية لطباعة هذا الطلب' });
+    }
   }
 
   if (type === 'shift' && (!payload || typeof payload !== 'object')) {

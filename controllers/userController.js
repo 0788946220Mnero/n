@@ -92,7 +92,7 @@ const createUser = async (req, res) => {
       return res.status(400).json({ success: false, message: 'اسم المستخدم مستخدم بالفعل' });
     }
 
-    const allowedRoles = ['admin', 'manager', 'cashier', 'employee', 'delivery'];
+    const allowedRoles = ['admin', 'manager', 'cashier', 'employee', 'delivery', 'center'];
     const finalRole = allowedRoles.includes(role) ? role : 'employee';
 
     const user = await User.create({
@@ -141,7 +141,7 @@ const updateUser = async (req, res) => {
     }
     if (name) user.name = String(name).trim();
     if (phone != null) user.phone = String(phone).trim();
-    if (role && ['admin', 'manager', 'cashier', 'employee', 'delivery'].includes(role)) user.role = role;
+    if (role && ['admin', 'manager', 'cashier', 'employee', 'delivery', 'center'].includes(role)) user.role = role;
     if (typeof isActive === 'boolean') user.isActive = isActive;
     // ✅ تحديث الصلاحيات (كانت تُهمَل تماماً فلا تُحفَظ أي صلاحية مخصّصة)
     if (permissions !== undefined) {

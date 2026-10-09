@@ -34,6 +34,8 @@ const PERMISSIONS = [
   { key: 'capital:manage', label: 'رأس المال: الرصيد والإيداع والسحب والصرف منه' },
   { key: 'employees:manage', label: 'الموظفون: إضافتهم وتعديلهم وكشوف حساباتهم' },
   { key: 'employees:pay', label: 'صرف للموظفين: رواتب وسلف ومكافآت (بتوقيع من يصرف)' },
+  { key: 'center:sell', label: 'بيع سنتر: استقبال طلبات الزبائن هاتفياً وإرسالها للمطعم (مع سجل الزبون)' },
+  { key: 'center:monitor', label: 'مراقبة موظفي السنتر: اتصالهم وانقطاعهم وطلباتهم' },
 ];
 
 const ALL_KEYS = PERMISSIONS.map((p) => p.key);
@@ -54,8 +56,12 @@ const ROLE_PERMISSIONS = {
     'delivery:manage', // الكاشير يعيّن المندوب ويرسل الطلب — كما كان يفعل من قائمة الطلبات
     'receivables:manage', // ذمم الموردين: تسجيل وتسديد وطباعة (الإزالة لمدير النظام وحده)
     'supplies:manage', // قائمة البضائع المطلوبة
+    'center:sell', // بيع سنتر من داخل المطعم (يُؤكَّد ويُطبع فوراً)
   ],
-  employee: ['orders:view', 'products:view'],
+  employee: ['orders:view', 'products:view', 'center:sell'],
+  // موظف سنتر (من المنزل): يستقبل الاتصالات ويرسل الطلبات للمطعم فقط —
+  // لا دفع ولا إلغاء ولا بيع سفري ولا قوائم الطلبات والزبائن (يفرضه الخادم أيضاً)
+  center: ['center:sell'],
   delivery: [], // حساب محاسبي للمندوب — بلا دخول ولا صلاحيات
 };
 

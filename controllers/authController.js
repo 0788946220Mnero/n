@@ -137,6 +137,8 @@ const logout = async (req, res) => {
         user.sessionId = crypto.randomUUID();
         user.refreshToken = null;
         await user.save();
+        // خروج طبيعي: المراقبة لا تعدّه انقطاعاً
+        try { require('../services/realtimeService').markLogout(user._id); } catch (_) {}
       }
     }
 

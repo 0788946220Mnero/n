@@ -12,6 +12,7 @@ const jwt = require('jsonwebtoken');
 const url = require('url');
 const { publicOrder, tokenMatches } = require('../utils/publicOrder');
 const { deliveryState } = require('../utils/deliveryState');
+const presence = require('./presenceService');
 
 let wss = null;
 const clients = new Set(); // { socket, userId, role }
@@ -39,6 +40,8 @@ const serializeOrder = (order) => ({
       : null,
   createdAt: order.createdAt,
   updatedAt: order.updatedAt,
+  centerBy: order.centerBy ? String(order.centerBy) : null,
+  centerByName: order.centerByName || '',
   // التوصيل والخريطة: كل ما يلزم لتحديث العلامة واللوحة دون إعادة جلب
   source: order.source,
   address: order.address || '',
@@ -134,9 +137,11 @@ const init = (server) => {
     /* الرمز يحمل المعرّف فقط، فالدور والجلسة يُقرآن من القاعدة.
        رمز جلسة مستبدَلة يُرفض برمز 4003 لتعرف الواجهة السبب. */
     let role = decoded.role || 'employee';
+    let userName = '';
+    let canMonitor = false;
     try {
       const User = require('../models/User');
-      const user = await User.findById(decoded.id).select('+sessionId role isActive').lean();
+      const user = await User.findById(decoded.id).select('+sessionId role isActive name username permissions').lean();
       if (!user || !user.isActive) {
         socket.close(4002, 'invalid user');
         return;
@@ -146,6 +151,8 @@ const init = (server) => {
         return;
       }
       role = user.role || role;
+      userName = user.name || user.username || '';
+      canMonitor = require('../utils/permissions').effectivePermissionsFor(user).includes('center:monitor');
     } catch (_) {
       socket.close(1011, 'server error');
       return;
@@ -154,13 +161,26 @@ const init = (server) => {
     // ربما أُغلق الاتصال أثناء قراءة القاعدة
     if (socket.readyState !== 1) return;
 
-    const client = { socket, userId: String(decoded.id), role, sid: decoded.sid || '' };
+    const client = { socket, userId: String(decoded.id), role, sid: decoded.sid || '', canMonitor };
     clients.add(client);
 
     socket.send(JSON.stringify({ type: 'connected', role }));
 
-    socket.on('close', () => clients.delete(client));
-    socket.on('error', () => clients.delete(client));
+    // الحضور: جلسة اتصال للمستخدم (المراقبة) + رسائل الواجهة: away/active عند الخلفية، bye قبل الخروج
+    const ua = String(req.headers['user-agent'] || '');
+    const device = /iPhone|iPad/i.test(ua) ? 'آيفون' : /Android/i.test(ua) ? 'أندرويد' : /DiyarPOS|WebView2/i.test(ua) ? 'DiyarPOS' : /Windows|Macintosh|Linux/i.test(ua) ? 'كمبيوتر' : 'جهاز';
+    presence.connect({ userId: client.userId, name: userName, role, socket, device });
+    // لمن يراقب: الحالة الحالية لكل المتصلين فور اتصاله
+    if (canMonitor) { try { socket.send(JSON.stringify({ type: 'presence.snapshot', list: presence.snapshot() })); } catch (_) {} }
+    socket.on('message', (raw) => {
+      let m; try { m = JSON.parse(String(raw).slice(0, 500)); } catch (_) { return; }
+      if (m && m.type === 'presence') presence.setState(client.userId, m.state);
+      else if (m && m.type === 'bye') presence.bye(client.userId);
+    });
+
+    const gone = () => { if (clients.delete(client)) presence.disconnect(client.userId, socket); };
+    socket.on('close', gone);
+    socket.on('error', gone);
 
     // نبضة إبقاء الاتصال حياً
     socket.isAlive = true;
@@ -178,6 +198,12 @@ const init = (server) => {
 
   wss.on('close', () => clearInterval(interval));
 
+  // المراقبة: كل تغيّر حضور يصل لمن يملك «مراقبة موظفي السنتر»
+  presence.init((event) => {
+    const msg = JSON.stringify(event);
+    clients.forEach((c) => { if (c.canMonitor && c.socket.readyState === 1) { try { c.socket.send(msg); } catch (_) {} } });
+  });
+
   console.log('🔌 خدمة الوقت الحقيقي (WebSocket) جاهزة على /ws');
 };
 
@@ -188,7 +214,12 @@ const broadcast = (type, payload) => {
 
   clients.forEach((c) => {
     // التحقق من الصلاحية قبل الإرسال
-    if (type.startsWith('order.') && !ORDER_VIEWER_ROLES.includes(c.role)) return;
+    if (type.startsWith('order.')) {
+      // موظف السنتر: أحداث طلباته هو فقط (ليتابع حالتها) — لا بيانات زبائن غيره
+      if (c.role === 'center') {
+        if (!payload.order || payload.order.centerBy !== c.userId) return;
+      } else if (!ORDER_VIEWER_ROLES.includes(c.role)) return;
+    }
     if (c.socket.readyState === 1) {
       try { c.socket.send(message); } catch (_) {}
     }
@@ -227,8 +258,12 @@ const endOtherSessions = (userId, keepSid) => {
     try { c.socket.send(JSON.stringify({ type: 'session.replaced' })); } catch (_) {}
     try { c.socket.close(4003, 'session_replaced'); } catch (_) {}
     clients.delete(c);
+    presence.disconnect(c.userId, c.socket);
   });
 };
+
+/** خروج طبيعي من الحساب: لا يُعدّ انقطاعاً في المراقبة. */
+const markLogout = (userId) => presence.bye(userId);
 
 /* مهام الطباعة عن بُعد: تُبث لكل اتصالات الموظفين؛ جهاز الكاشير
    يحجز المهمة ذرّياً عبر الـ API، والمرسِل يتابع حالتها بمعرّفها. */
@@ -260,6 +295,7 @@ module.exports = {
   emitOrderCancelled,
   emitOrderRequest,
   endOtherSessions,
+  markLogout,
   emitPrintJob,
   emitPrintJobUpdated,
   connectedCount,

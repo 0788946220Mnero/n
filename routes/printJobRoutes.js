@@ -19,6 +19,8 @@ const canPrint = (req, res, next) => {
   if (['admin', 'manager', 'cashier'].includes(req.user.role)) return next();
   const { hasPermission } = require('../middlewares/permission');
   if (req.body && req.body.type === 'expense' && hasPermission(req.user, 'employees:pay')) return next();
+  // بيع سنتر من داخل المطعم (موظف): طباعة طلبه هو فقط — يُتحقق في المتحكّم
+  if (req.body && req.body.type === 'confirm' && req.user.role !== 'center' && hasPermission(req.user, 'center:sell')) return next();
   return res.status(403).json({ success: false, message: 'ليس لديك صلاحية للقيام بهذا الإجراء' });
 };
 router.post('/', protect, canPrint, createJob);

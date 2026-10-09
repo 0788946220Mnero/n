@@ -75,7 +75,7 @@ const getOrders = async (req, res) => {
   if (req.query.brand) filter.brand = req.query.brand;
   if (req.query.status) filter.status = req.query.status;
   // مبيعات السفري في شاشة البيع: source=pos، و mine=true لمبيعات المستخدم نفسه
-  if (['web', 'pos', 'app'].includes(req.query.source)) filter.source = req.query.source;
+  if (['web', 'pos', 'app', 'center'].includes(req.query.source)) filter.source = req.query.source;
   if (req.query.mine === 'true' && req.user) filter.handledBy = req.user._id;
   // سجل الطلبات: فترة، نوع، مندوب، حالة توصيل
   if (req.query.from || req.query.to) {
@@ -368,9 +368,17 @@ const createOrder = async (req, res) => {
     // سجل العميل: إنشاء إن لم يوجد، وتحديث بياناته إن وُجد (بلا تكرار)
     try {
       const existing = await Customer.findOne({ phone });
+      // آخر موقع للزبون: يُعبّأ تلقائياً عندما يطلب لاحقاً هاتفياً من «بيع سنتر»
+      const last = { lastOrderType: order.orderType, lastSource: 'web' };
+      if (order.orderType === 'delivery') {
+        last.lastAddressDetail = address || '';
+        last.lastAddressOption = '';
+        if (custLat != null) { last.lastLatitude = custLat; last.lastLongitude = custLng; }
+      }
       if (existing) {
         existing.name = customerName || existing.name;
         if (address) existing.address = address;
+        Object.assign(existing, last);
         existing.lastOrderAt = new Date();
         if (!existing.firstOrderAt) existing.firstOrderAt = new Date();
         await existing.save();
@@ -381,6 +389,7 @@ const createOrder = async (req, res) => {
           address: address || '',
           firstOrderAt: new Date(),
           lastOrderAt: new Date(),
+          ...last,
         });
       }
     } catch (e) { /* لا نُفشل الطلب إن تعذّر تحديث سجل العميل */ }
@@ -1065,13 +1074,15 @@ const summarizeOrders = (orders, expenses = [], delivery = null, collections = [
   const success = orders.filter(isSuccess);
   const pendingList = orders.filter((o) => o.status !== 'cancelled' && !isSuccess(o));
 
-  const platform = success.filter((o) => !isPos(o));
+  const isCenter = (o) => o.source === 'center';
+  const platform = success.filter((o) => !isPos(o) && !isCenter(o));
+  const center = success.filter(isCenter);
   const direct = success.filter(isPos);
 
   const fees = (arr) => Number(arr.reduce((t, o) => t + Number(o.deliveryFee || 0), 0).toFixed(3));
 
   // توصيل طلبات هذا الجرد: يظهر لكل مستخدم للعلم فقط، ولا يدخل أي مجموع
-  const withFee = platform.filter((o) => Number(o.deliveryFee || 0) > 0);
+  const withFee = platform.concat(center).filter((o) => Number(o.deliveryFee || 0) > 0);
 
   // دفتر التوصيل (الأدمن): مستحقات المندوبين، مفصّلة لكل مندوب
   const deliveryTotal = delivery ? fees(delivery) : 0;
@@ -1112,6 +1123,9 @@ const summarizeOrders = (orders, expenses = [], delivery = null, collections = [
     platformTotal: sum(platform),
     directCount: direct.length,
     directTotal: sum(direct),
+    // بيع سنتر: الطلبات الهاتفية (منفصلة عن المنصة والسفري)
+    centerCount: center.length,
+    centerTotal: sum(center),
     // دفتر التوصيل (null لغير الأدمن): مستحقات المندوبين، خارج المبيعات والصندوق
     deliveryInfoCount: withFee.length,
     deliveryInfoTotal: fees(withFee),

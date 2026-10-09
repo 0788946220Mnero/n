@@ -68,6 +68,7 @@ const resolveRange = ({ preset = 'today', from, to } = {}) => {
 const salesValueExpr = { $subtract: [{ $ifNull: ['$total', 0] }, { $ifNull: ['$deliveryFee', 0] }] };
 const isSuccess = { $and: [{ $ne: ['$status', 'pending'] }, { $ne: ['$status', 'cancelled'] }] };
 const isPos = { $eq: ['$source', 'pos'] };
+const isCenter = { $eq: ['$source', 'center'] };
 const isDelivery = { $and: [{ $ne: ['$source', 'pos'] }, { $eq: ['$orderType', 'delivery'] }] };
 
 /** خط التجميع لفترة: كل البطاقات والمخططات في استعلام واحد ($facet). */
@@ -101,6 +102,8 @@ const buildRangePipeline = (match) => [
             deliveryFees: { $sum: { $cond: [{ $and: [isSuccess, isDelivery] }, { $ifNull: ['$deliveryFee', 0] }, 0] } },
             posCount: { $sum: { $cond: [{ $and: [isSuccess, isPos] }, 1, 0] } },
             posValue: { $sum: { $cond: [{ $and: [isSuccess, isPos] }, salesValueExpr, 0] } },
+            centerCount: { $sum: { $cond: [{ $and: [isSuccess, isCenter] }, 1, 0] } },
+            centerValue: { $sum: { $cond: [{ $and: [isSuccess, isCenter] }, salesValueExpr, 0] } },
             cashValue: { $sum: { $cond: [{ $and: [isSuccess, { $eq: [{ $ifNull: ['$paymentMethod', 'cash'] }, 'cash'] }] }, salesValueExpr, 0] } },
             cliqValue: { $sum: { $cond: [{ $and: [isSuccess, { $eq: ['$paymentMethod', 'cliq'] }] }, salesValueExpr, 0] } },
             cardValue: { $sum: { $cond: [{ $and: [isSuccess, { $in: ['$paymentMethod', ['card', 'online']] }] }, salesValueExpr, 0] } },
@@ -187,6 +190,7 @@ const shapeRangeResult = (facet, { firstOrderByPhone = new Map(), from } = {}) =
     },
     delivery: { count: t.deliveryCount || 0, value: r3(t.deliveryValue), fees: r3(t.deliveryFees) },
     pos: { count: t.posCount || 0, value: r3(t.posValue) },
+    center: { count: t.centerCount || 0, value: r3(t.centerValue) },
     customers: {
       active: phones.length,
       new: newCustomers,

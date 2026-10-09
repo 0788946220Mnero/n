@@ -1,6 +1,14 @@
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 
+/** ما يحتاجه موظف السنتر فقط: حسابه، والقائمة والإعدادات للقراءة، ومسارات السنتر. */
+const centerAllowed = (req) => {
+  const url = String(req.originalUrl || '').split('?')[0];
+  if (url.startsWith('/api/auth/') || url.startsWith('/api/center/') || url === '/api/center') return true;
+  if (req.method !== 'GET') return false;
+  return /^\/api\/(products|categories|settings)(\/|$)/.test(url);
+};
+
 // التحقق من وجود توكن صالح
 const protect = async (req, res, next) => {
   try {
@@ -35,6 +43,10 @@ const protect = async (req, res, next) => {
     delete user._doc.sessionId;
 
     req.user = user;
+    // موظف السنتر: بيع سنتر فقط — كل ما عداه مرفوض هنا مهما كانت الواجهة
+    if (user.role === 'center' && !centerAllowed(req)) {
+      return res.status(403).json({ message: 'حساب موظف السنتر مخصّص لإرسال الطلبات فقط', code: 'CENTER_ONLY' });
+    }
     next();
   } catch (error) {
     return res.status(401).json({ message: 'التوكن غير صالح أو منتهي الصلاحية' });
