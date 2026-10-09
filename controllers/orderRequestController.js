@@ -175,7 +175,8 @@ const resolveRequest = async (req, res) => {
           if (dcfg.pricingMode === 'byValue') {
             // الرسوم تتبع القيمة الجديدة — ولا ترتفع بإضافة أصناف
             const { feeForValue } = require('../services/deliveryFeeService');
-            deliveryFee = Math.min(deliveryFee, feeForValue(itemsTotal, dcfg).fee);
+            const v = feeForValue(itemsTotal, dcfg, order.deliveryDistance);
+            if (v.fee != null) deliveryFee = Math.min(deliveryFee, v.fee);
             set.deliveryFee = deliveryFee;
           }
         } catch (_) { /* تبقى الرسوم كما هي */ }

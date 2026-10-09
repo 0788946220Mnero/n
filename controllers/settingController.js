@@ -77,10 +77,11 @@ const updateSettings = async (req, res) => {
       d.addressOptionRequired = d.addressOptionRequired === true && d.addressOptions.length > 0;
       // شرائح «حسب قيمة الطلب»: تنظيف، وإن لم ترسلها نسخة لوحة أقدم تبقى المحفوظة
       const { cleanValueTiers } = require('../services/deliveryFeeService');
-      const prevTiers = prev.valueTiers && prev.valueTiers.length ? prev.valueTiers.map((t) => ({ minTotal: t.minTotal, fee: t.fee })) : undefined;
+      const prevTiers = prev.valueTiers && prev.valueTiers.length ? prev.valueTiers.map((t) => ({ minTotal: t.minTotal, fee: t.fee, byDistance: t.byDistance === true })) : undefined;
       d.valueTiers = (Array.isArray(d.valueTiers) && cleanValueTiers(d.valueTiers)) || prevTiers || undefined;
       if (d.valueTiers === undefined) delete d.valueTiers;
       if (!['perKm', 'tiered', 'byValue'].includes(d.pricingMode)) d.pricingMode = prev.pricingMode || 'perKm';
+      if (!['perKm', 'tiered'].includes(d.valueDistanceMode)) d.valueDistanceMode = prev.valueDistanceMode || 'perKm';
     }
 
     updatable.forEach((field) => {
@@ -451,6 +452,7 @@ const getDeliveryQuote = async (req, res) => {
       pricingMode: quote.pricingMode || d.pricingMode || 'perKm',
       itemsTotal,
       next: quote.next || null, // byValue: كم يضيف الزبون لتقلّ الرسوم
+      byDistance: quote.byDistance === true, // byValue: الشريحة الحالية محسوبة على المسافة
     });
   } catch (err) {
     console.error('getDeliveryQuote error:', err);
@@ -478,6 +480,7 @@ const getDeliveryConfig = async (req, res) => {
       tier2PerKm: Number(d.tier2PerKm ?? 0.25),
       tier3PerKm: Number(d.tier3PerKm ?? 0.15),
       valueTiers: require('../services/deliveryFeeService').normalize(d).valueTiers,
+      valueDistanceMode: require('../services/deliveryFeeService').normalize(d).valueDistanceMode,
       addressOptions: Array.isArray(d.addressOptions) ? d.addressOptions : [],
       addressOptionRequired: d.addressOptionRequired === true,
     });

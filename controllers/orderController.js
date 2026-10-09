@@ -6,7 +6,7 @@ const Customer = require('../models/Customer');
 const Product = require('../models/Product');
 const BlockedPhone = require('../models/BlockedPhone');
 const Setting = require('../models/Setting');
-const { quoteDelivery } = require('../services/deliveryFeeService');
+const { quoteDelivery, feeForValue } = require('../services/deliveryFeeService');
 const realtime = require('../services/realtimeService');
 const pushService = require('../services/pushService');
 const { generateUniqueOrderNumber } = require('../utils/orderNumber');
@@ -335,6 +335,10 @@ const createOrder = async (req, res) => {
           deliveryDistance = quote.distanceKm;
           deliveryDistanceMode = quote.distanceMode;
         }
+      } else if (dcfg.pricingMode === 'byValue') {
+        // «حسب قيمة الطلب» بلا موقع: الشريحة الثابتة تُحسب، و«على المسافة» تبقى صفراً كالسابق
+        const v = feeForValue(computedItemsTotal, dcfg);
+        if (!v.needsDistance && v.fee != null) serverDeliveryFee = v.fee;
       }
     }
 

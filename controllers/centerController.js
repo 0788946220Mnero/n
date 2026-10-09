@@ -129,8 +129,8 @@ const createOrder = async (req, res) => {
         return res.status(400).json({ success: false, code: 'OUT_OF_RANGE', message: `الموقع خارج نطاق التوصيل (${q.distanceKm} كم — الحد ${q.maxDistanceKm} كم)` });
       }
       if (q.ok) { deliveryFee = q.fee; deliveryDistance = q.distanceKm; deliveryDistanceMode = q.distanceMode; }
-    } else if (d.pricingMode === 'byValue') {
-      deliveryFee = feeForValue(priced.itemsTotal, d).fee; // حسب قيمة الطلب: لا تحتاج المسافة
+    } else if (d.pricingMode === 'byValue' && !feeForValue(priced.itemsTotal, d).needsDistance) {
+      deliveryFee = feeForValue(priced.itemsTotal, d).fee; // شريحة بمبلغ ثابت: لا تحتاج المسافة
     } else if (hasRest) {
       return res.status(400).json({ success: false, code: 'LOCATION_REQUIRED', message: 'حدّد موقع الزبون على الخريطة (أو أقرب معلم) لحساب رسوم التوصيل' });
     }
