@@ -25,7 +25,6 @@ const presence = require('../services/presenceService');
 const { generateUniqueOrderNumber } = require('../utils/orderNumber');
 const { quoteDelivery, feeForValue } = require('../services/deliveryFeeService');
 const { logActivity } = require('../utils/activity');
-const { touchOpenSession } = require('../services/shiftService');
 
 const nameOf = (u) => (u && (u.name || u.username)) || '';
 const r3 = (n) => Number(Number(n || 0).toFixed(3));
@@ -79,7 +78,6 @@ const priceItems = async (items) => {
 const createOrder = async (req, res) => {
   const b = req.body || {};
   const user = req.user;
-  const isAgent = user.role === 'center';
 
   const phone = normPhone(b.phone);
   if (!phone) return res.status(400).json({ success: false, code: 'INVALID_PHONE', message: 'رقم الزبون غير صحيح — 10 أرقام يبدأ بـ 07' });
@@ -141,7 +139,8 @@ const createOrder = async (req, res) => {
   }
 
   const now = new Date();
-  const confirmed = !isAgent; // موظف المطعم: مؤكَّد فوراً ويدخل جرده
+  // كل طلبات السنتر (موظف سنتر أو موظف مطعم) تُعامل معاملة طلب المنصة:
+  // معلّقة + تنبيه للكاشير + قسائم المطبخ تلقائياً، والتأكيد وطباعة الفاتورة يدوياً من الكاشير
   const order = await Order.create({
     orderNumber: await generateUniqueOrderNumber(),
     customerName, phone, address, addressOption: orderType === 'delivery' ? addressOption : '',
@@ -158,18 +157,15 @@ const createOrder = async (req, res) => {
     source: 'center',
     centerBy: user._id,
     centerByName: nameOf(user),
-    status: confirmed ? 'new' : 'pending',
-    confirmedAt: confirmed ? now : null,
-    handledBy: confirmed ? user._id : null,
-    handledByName: confirmed ? nameOf(user) : '',
+    status: 'pending',
+    confirmedAt: null,
+    handledBy: null,
+    handledByName: '',
     printRequested: true, // قسائم الأقسام تخرج تلقائياً على جهاز الطباعة في المطعم
     printed: false,
     clientRef,
     trackingToken: crypto.randomBytes(16).toString('hex'),
-    timeline: [
-      { event: 'status:pending', at: now, byName: nameOf(user) },
-      ...(confirmed ? [{ event: 'status:new', at: now, byName: nameOf(user) }] : []),
-    ],
+    timeline: [{ event: 'status:pending', at: now, byName: nameOf(user) }],
   });
 
   // سجل الزبون: واحد برقمه — المنصة والسنتر معاً
@@ -187,11 +183,10 @@ const createOrder = async (req, res) => {
   } catch (e) { console.error('center customer upsert:', e.message); }
 
   logActivity({ req, order, action: 'center.order', after: order.status, details: { type: orderType, phone } });
-  if (confirmed) touchOpenSession(user);
   try { realtime.emitOrderCreated(order); } catch (e) { console.error('realtime emit failed:', e.message); }
-  if (!confirmed) pushService.notifyNewOrder(order).catch(() => {});
+  pushService.notifyNewOrder(order).catch(() => {});
   console.log(`📞 بيع سنتر ${order.orderNumber} بواسطة ${user.username} (${order.status}) — ${order.total} د.أ`);
-  res.status(201).json({ success: true, order, confirmed });
+  res.status(201).json({ success: true, order, confirmed: false });
 };
 
 const brief = (o) => ({
