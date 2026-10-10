@@ -7,6 +7,7 @@ const Product = require('../models/Product');
 const BlockedPhone = require('../models/BlockedPhone');
 const Setting = require('../models/Setting');
 const { quoteDelivery, feeForValue } = require('../services/deliveryFeeService');
+const { priceOrderItems } = require('../services/pricingService');
 const realtime = require('../services/realtimeService');
 const pushService = require('../services/pushService');
 const { generateUniqueOrderNumber } = require('../utils/orderNumber');
@@ -192,70 +193,23 @@ const createOrder = async (req, res) => {
       }
     }
 
-    // فحص توفّر المنتجات (منع طلب صنف موقوف مؤقتاً حتى لو تجاوز الواجهة)
-    const productIds = items.map((it) => it.product).filter((id) => id && mongoose.Types.ObjectId.isValid(id));
-    if (productIds.length) {
-      const unavailable = await Product.find({ _id: { $in: productIds }, isAvailable: false }).select('nameAr');
-      if (unavailable.length) {
-        const names = unavailable.map((p) => p.nameAr).join('، ');
-        return res.status(409).json({ success: false, code: 'ITEM_UNAVAILABLE', message: `عذراً، أصبح غير متوفر حالياً: ${names}. الرجاء تعديل طلبك.` });
-      }
+    /* تسعير الأصناف من قاعدة البيانات (services/pricingService):
+       الجهاز يحدّد «ماذا» فقط — المنتج والكمية وأسماء الإضافات — والسعر من الخادم.
+       صنف موقوف أو غير موجود يُرفض بـ 409 فيعرض الموقع الرسالة ويتوقف. */
+    const priced = await priceOrderItems(items);
+    if (priced.error) {
+      return res.status(409).json({ success: false, code: priced.code, message: priced.error });
     }
+    const normalizedItems = priced.items;
 
     // ✅ رقم تسلسلي حقيقي (عدّاد ذرّي) بدل الرقم المشتق من الوقت
     const orderNumber = await generateUniqueOrderNumber();
-
-    // توحيد شكل الأصناف القادمة من الواجهة مع النموذج، مع تجاهل product غير الصالح
-    const normalizedItems = items.map((item) => {
-      const normalized = {
-        nameAr: item.nameAr || item.name || '',
-        quantity: Number(item.quantity || item.qty || 1),
-        price: Number(item.price || 0),
-        addons: Array.isArray(item.addons) ? item.addons : [],
-        notes: item.notes || '',
-      };
-      // نُدرج product فقط إن كان ObjectId صالحاً (أصناف حقيقية من قاعدة البيانات)
-      if (item.product && mongoose.Types.ObjectId.isValid(item.product)) {
-        normalized.product = item.product;
-      }
-      return normalized;
-    });
-
-    /* نسخ طابعة كل صنف من المنتج (تبقى ثابتة مع الطلب حتى لو تغيّرت لاحقاً)،
-       والسعر من قاعدة البيانات: السعر القادم من الجهاز (سلة قديمة أو «إعادة طلب») ليس نهائياً.
-       الصنف = سعره الحالي + أسعار إضافاته المعرّفة عليه؛ الإضافة غير المعرّفة تبقى كما أُرسلت. */
-    try {
-      const ids = normalizedItems.map((i) => i.product).filter(Boolean);
-      if (ids.length) {
-        const products = await Product.find({ _id: { $in: ids } }).select('printerName price addons').lean();
-        const byId = new Map(products.map((p) => [String(p._id), p]));
-        normalizedItems.forEach((i) => {
-          if (!i.product) return;
-          const p = byId.get(String(i.product));
-          if (!p) return;
-          i.printerName = p.printerName || '';
-          if (typeof p.price === 'number') {
-            const known = new Map((p.addons || []).map((a) => [String(a.name || '').trim(), Number(a.price || 0)]));
-            i.addons = (i.addons || []).map((a) => {
-              const k = String((a && a.name) || '').trim();
-              return known.has(k) ? { name: k, price: known.get(k) } : { name: k, price: Number((a && a.price) || 0) };
-            });
-            const addonsTotal = i.addons.reduce((t, a) => t + Number(a.price || 0), 0);
-            i.price = Number((p.price + addonsTotal).toFixed(3));
-          }
-        });
-      }
-    } catch (e) {
-      console.error('تعذّر جلب أسعار/طابعات الأصناف:', e.message);
-    }
 
     // ═══ حساب رسوم التوصيل في الخادم (مصدر الحقيقة) ═══
     // نتجاهل أي deliveryFee قادم من الواجهة ونعيد حسابه من الإحداثيات وإعدادات المطعم.
     const isDelivery = (orderType || 'delivery') !== 'pickup';
     // المجموع يُحسب دائماً من الأصناف بعد تسعيرها في الخادم
-    const computedItemsTotal = Number(
-      normalizedItems.reduce((t, i) => t + Number(i.price || 0) * Number(i.quantity || 1), 0).toFixed(3)
-    );
+    const computedItemsTotal = priced.itemsTotal;
 
     let serverDeliveryFee = 0;
     let deliveryDistance = null;
