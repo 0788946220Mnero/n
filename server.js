@@ -107,6 +107,7 @@ app.use('/api/supplies', require('./routes/supplyRoutes')); // قائمة الب
 app.use('/api/capital', require('./routes/capitalRoutes')); // رأس المال
 app.use('/api/employees', require('./routes/employeeRoutes')); // الموظفون وصرفهم
 app.use('/api/center', require('./routes/centerRoutes')); // بيع سنتر: طلبات هاتفية + سجل الزبون + مراقبة الموظفين
+app.use('/api/live-report', require('./routes/liveReportRoutes')); // التقرير الحي على شاشة القفل (Web Push)
 
 // فحص صحة الخادم — يفيد أيضاً لاختبار CORS من المتصفح
 app.get('/api/health', (req, res) => {

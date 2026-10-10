@@ -14,6 +14,7 @@ const openShift = async (req, res) => {
   }
   const shift = await ensureOpenSession(req.user, { auto: false });
   logActivity({ req, action: 'shift.open', details: { shiftId: shift.shiftId } });
+  require('../services/liveReportService').touch(); // التقرير الحي: جرد جديد مفتوح
   res.status(201).json({ success: true, shift, message: 'تم فتح الجرد' });
 };
 

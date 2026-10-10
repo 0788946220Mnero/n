@@ -143,6 +143,7 @@ const createExpense = async (req, res) => {
     });
   }
   console.log(`💸 مصروف #${expense.number} «${name}» ${expense.amount} د.أ بواسطة ${req.user.username}`);
+  require('../services/liveReportService').touch(); // التقرير الحي: المصروفات تغيّرت
   res.status(201).json({ success: true, expense });
 };
 
@@ -180,6 +181,7 @@ const voidExpense = async (req, res) => {
     );
   }
 
+  require('../services/liveReportService').touch(); // التقرير الحي: أُلغي مصروف
   res.json({ success: true, expense });
 };
 

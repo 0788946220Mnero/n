@@ -209,6 +209,10 @@ const init = (server) => {
 
 /** بثّ حدث لأصحاب الصلاحية فقط. */
 const broadcast = (type, payload) => {
+  // التقرير الحي على شاشة القفل: أي تغيّر في الطلبات أو الجرد يحدّثه (بعد هدوء قصير)
+  if (/^(order\.(created|status_changed|cancelled|updated)|shift\.)/.test(type)) {
+    try { require('./liveReportService').touch(); } catch (_) { /* لا يعطّل البث */ }
+  }
   if (!wss) return;
   const message = JSON.stringify({ type, ...payload });
 

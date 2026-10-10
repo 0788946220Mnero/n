@@ -36,6 +36,8 @@ const PERMISSIONS = [
   { key: 'employees:pay', label: 'صرف للموظفين: رواتب وسلف ومكافآت (بتوقيع من يصرف)' },
   { key: 'center:sell', label: 'بيع سنتر: استقبال طلبات الزبائن هاتفياً وإرسالها للمطعم (مع سجل الزبون)' },
   { key: 'center:monitor', label: 'مراقبة موظفي السنتر: اتصالهم وانقطاعهم وطلباتهم' },
+  { key: 'voice:commands', label: 'مستقبل أوامر المدير (أوامر صوتية) — كل أمر يُنفَّذ بصلاحيات المستخدم نفسه' },
+  { key: 'stats:live', label: 'التقرير الحي على شاشة القفل: المبيعات والمصروفات ومن جرده مفتوح (يُخفى حتى Face ID)' },
 ];
 
 const ALL_KEYS = PERMISSIONS.map((p) => p.key);
@@ -44,7 +46,8 @@ const ROLE_PERMISSIONS = {
   admin: [...ALL_KEYS],
   // رأس المال لمدير النظام وحده افتراضياً (يُمنح لغيره من «المستخدمون» عند الحاجة)
   // رأس المال وصرف الموظفين: لمدير النظام افتراضياً، ويُمنحان لغيره من «المستخدمون»
-  manager: ALL_KEYS.filter((k) => !['users:manage', 'capital:manage', 'employees:pay'].includes(k)),
+  // والأوامر الصوتية: لمدير النظام افتراضياً، ويمنحها لمن يريد
+  manager: ALL_KEYS.filter((k) => !['users:manage', 'capital:manage', 'employees:pay', 'voice:commands', 'stats:live'].includes(k)),
   cashier: [
     'orders:view',
     'orders:manage',

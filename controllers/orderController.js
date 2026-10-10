@@ -1184,17 +1184,23 @@ const loadDeliveryLedger = (user, scope, brand) =>
 const resolveScope = (user, requested) => (requested === 'all' && canCloseAll(user) ? 'all' : 'mine');
 
 // GET /api/orders/shift-summary?scope=mine|all — معاينة الجرد قبل الإغلاق (لا تُغيّر شيئاً)
+/** ملخص الجرد المفتوح — نفس أرقام تقرير الجرد (يستخدمه أيضاً التقرير الحي على شاشة القفل). */
+const shiftSummaryFor = async (user, scope = 'all', brand) => {
+  const [orders, expenses, delivery, collections] = await Promise.all([
+    Order.find(shiftFilter(user, scope, brand)).lean(),
+    Expense.find(expenseFilter(user, scope)).lean(),
+    loadDeliveryLedger(user, scope, brand),
+    loadCollections(user, scope),
+  ]);
+  const summary = summarizeOrders(orders, expenses, delivery, collections);
+  if (scope === 'all') summary.byUser = userSummaries(orders, expenses, collections);
+  return summary;
+};
+
 const getShiftSummary = async (req, res) => {
   try {
     const scope = resolveScope(req.user, req.query.scope);
-    const [orders, expenses, delivery, collections] = await Promise.all([
-      Order.find(shiftFilter(req.user, scope, req.query.brand)).lean(),
-      Expense.find(expenseFilter(req.user, scope)).lean(),
-      loadDeliveryLedger(req.user, scope, req.query.brand),
-      loadCollections(req.user, scope),
-    ]);
-    const summary = summarizeOrders(orders, expenses, delivery, collections);
-    if (scope === 'all') summary.byUser = userSummaries(orders, expenses, collections);
+    const summary = await shiftSummaryFor(req.user, scope, req.query.brand);
     res.json({
       success: true,
       summary: { ...summary, scope, userName: scope === 'all' ? 'جرد المطعم كاملاً' : handlerName(req.user) },
@@ -1375,6 +1381,7 @@ const closeShift = async (req, res) => {
 };
 
 module.exports = wrapAll({
+  shiftSummaryFor,
   getShiftSummary,
   getShiftOverview,
   getDrivers,
