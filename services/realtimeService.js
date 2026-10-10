@@ -224,6 +224,8 @@ const broadcast = (type, payload) => {
         if (!payload.order || payload.order.centerBy !== c.userId) return;
       } else if (!ORDER_VIEWER_ROLES.includes(c.role)) return;
     }
+    // الرسول: أوامر المدير لأجهزة المطعم فقط (لا لموظف السنتر ولا للمندوب)
+    if (type.startsWith('relay.') && !['admin', 'manager', 'cashier'].includes(c.role)) return;
     if (c.socket.readyState === 1) {
       try { c.socket.send(message); } catch (_) {}
     }
@@ -292,6 +294,7 @@ const emitShiftClosed = (shiftId, scope) => broadcast('shift.closed', { shiftId,
 
 module.exports = {
   init,
+  broadcast,
   emitShiftClosed,
   emitOrderCreated,
   emitOrderUpdated,
