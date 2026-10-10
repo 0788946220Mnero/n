@@ -12,6 +12,7 @@ const relayCommandSchema = new mongoose.Schema(
     text: { type: String, default: '', maxlength: 300 },       // ما قاله المدير
     summary: { type: String, default: '', maxlength: 300 },    // ما سيُعلن على جهاز الكاشير
     action: { type: mongoose.Schema.Types.Mixed, required: true }, // { type, ...params }
+    target: { type: String, default: '' },                     // جهاز محدد (deviceId) — فارغ = أي جهاز كاشير
     status: { type: String, enum: ['queued', 'running', 'done', 'failed', 'cancelled', 'expired'], default: 'queued', index: true },
     claimedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
     claimedByName: { type: String, default: '' },

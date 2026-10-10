@@ -33,7 +33,7 @@ const onlineReceivers = () => {
 
 const serialize = (c) => ({
   _id: String(c._id), from: String(c.from), fromName: c.fromName, text: c.text, summary: c.summary,
-  action: c.action, status: c.status, claimedByName: c.claimedByName, device: c.device,
+  action: c.action, target: c.target || '', status: c.status, claimedByName: c.claimedByName, device: c.device,
   result: c.result, createdAt: c.createdAt, expiresAt: c.expiresAt,
 });
 
@@ -47,7 +47,8 @@ const create = async (req, res) => {
     from: req.user._id, fromName: nameOf(req.user),
     text: String(req.body.text || '').slice(0, 300),
     summary: String(req.body.summary || '').slice(0, 300),
-    action, expiresAt: new Date(Date.now() + TTL_MS),
+    action, target: String((req.body && req.body.target) || '').slice(0, 64),
+    expiresAt: new Date(Date.now() + TTL_MS),
   });
   realtime.broadcast('relay.command', { command: serialize(cmd) });
   res.status(201).json({ success: true, command: serialize(cmd), receivers: onlineReceivers().length });
@@ -56,7 +57,8 @@ const create = async (req, res) => {
 const claim = async (req, res) => {
   if (!RECEIVER_ROLES.includes(req.user.role)) return res.status(403).json({ success: false, message: 'هذا الحساب لا يستقبل الأوامر' });
   const cmd = await RelayCommand.findOneAndUpdate(
-    { _id: req.params.id, status: 'queued', expiresAt: { $gt: new Date() } },
+    // أمر لجهاز محدد لا يستلمه غيره (null: أوامر قديمة بلا الحقل)
+    { _id: req.params.id, status: 'queued', expiresAt: { $gt: new Date() }, target: { $in: ['', null, String((req.body && req.body.deviceId) || '').slice(0, 64)] } },
     { $set: { status: 'running', claimedBy: req.user._id, claimedByName: nameOf(req.user), device: String((req.body && req.body.device) || '').slice(0, 60) } },
     { new: true }
   );
@@ -110,12 +112,12 @@ const heartbeat = async (req, res) => {
   const deviceId = String((req.body && req.body.deviceId) || '').slice(0, 64);
   if (!deviceId) return res.status(400).json({ success: false });
   if (req.body && req.body.off) receivers.delete(deviceId);
-  else receivers.set(deviceId, { deviceId, deviceName: String(req.body.deviceName || '').slice(0, 40), userName: nameOf(req.user), at: Date.now() });
+  else receivers.set(deviceId, { deviceId, deviceName: String(req.body.deviceName || '').slice(0, 40), userName: nameOf(req.user), role: req.user.role, at: Date.now() });
   res.json({ success: true });
 };
 
 const listReceivers = async (req, res) => {
-  res.json({ success: true, data: onlineReceivers().map(({ deviceId, deviceName, userName }) => ({ deviceId, deviceName, userName })) });
+  res.json({ success: true, data: onlineReceivers().map(({ deviceId, deviceName, userName, role, at }) => ({ deviceId, deviceName, userName, role, seenAgo: Date.now() - at })) });
 };
 
 module.exports = wrapAll({ create, claim, done, cancel, getOne, pending, heartbeat, listReceivers });

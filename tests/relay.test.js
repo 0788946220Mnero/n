@@ -15,6 +15,7 @@ RelayCommand.findOneAndUpdate = async (f, u) => {
   if (f.expiresAt && !(d.expiresAt > f.expiresAt.$gt)) return null;
   if (f.claimedBy && String(d.claimedBy) !== String(f.claimedBy)) return null;
   if (f.from && String(d.from) !== String(f.from)) return null;
+  if (f.target && f.target.$in && !f.target.$in.includes(d.target === undefined ? null : d.target)) return null;
   Object.assign(d, u.$set); return d;
 };
 RelayCommand.findById = (id) => ({ lean: async () => DB.get(id) || null });
@@ -84,9 +85,22 @@ test('الأمر المنتهي لا يُستلم', async () => {
 test('الأجهزة المستقبلة المتصلة', async () => {
   await call('heartbeat', cashier, { body: { deviceId: 'pc1', deviceName: 'DiyarPOS' } });
   let l = await call('listReceivers', admin);
-  assert.deepEqual(l.body.data, [{ deviceId: 'pc1', deviceName: 'DiyarPOS', userName: 'سامي' }]);
+  const { seenAgo, ...dev } = l.body.data[0];
+  assert.deepEqual(dev, { deviceId: 'pc1', deviceName: 'DiyarPOS', userName: 'سامي', role: 'cashier' });
+  assert.ok(seenAgo >= 0 && seenAgo < 1000);
   await call('heartbeat', cashier, { body: { deviceId: 'pc1', off: true } });
   l = await call('listReceivers', admin);
   assert.equal(l.body.data.length, 0);
   assert.equal((await call('heartbeat', center, { body: { deviceId: 'x' } })).code, 403);
+});
+
+test('أمر لجهاز محدد: لا يستلمه إلا ذلك الجهاز', async () => {
+  const r = await call('create', admin, { body: { action: { type: 'drawer' }, target: 'devB' } });
+  const id = r.body.command._id;
+  assert.equal(r.body.command.target, 'devB');
+  assert.equal((await call('claim', cashier, { params: { id }, body: { deviceId: 'devA' } })).code, 409);
+  assert.equal((await call('claim', cashier2, { params: { id }, body: { deviceId: 'devB' } })).code, 200);
+  // بلا هدف: أي جهاز
+  const r2 = await call('create', admin, { body: { action: { type: 'drawer' } } });
+  assert.equal((await call('claim', cashier, { params: { id: r2.body.command._id }, body: { deviceId: 'devA' } })).code, 200);
 });
