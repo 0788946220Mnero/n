@@ -136,6 +136,8 @@ realtime.init(server);
 server.listen(PORT, () => {
   console.log(`🚀 الخادم يعمل على المنفذ ${PORT}`);
   console.log(`🌐 النطاقات المسموحة: ${allowedOrigins.join(' | ')}`);
+  // التقرير الحي: تحديث دوري أثناء الدوام (كل 15 دقيقة افتراضياً)
+  try { require('./services/liveReportService').start(); } catch (e) { console.error('liveReport:', e.message); }
 });
 
 // ------- شبكة أمان: لا نسمح لخطأ غير متوقّع بإسقاط الخادم صامتاً -------

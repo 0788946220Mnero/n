@@ -127,3 +127,24 @@ test('صلاحية stats:live: لمدير النظام افتراضياً، لا
   assert.ok(effectivePermissionsFor({ role: 'admin' }).includes('voice:commands'));
   assert.ok(!effectivePermissionsFor({ role: 'manager', permissions: [] }).includes('voice:commands'));
 });
+
+test('العنوان يحمل وقت التحديث بتوقيت عمّان', async () => {
+  reset();
+  await live.sendNow();
+  const t = sent[0].payload.title;
+  assert.match(t, /^📊 ديار الأنباط — \d{2}:\d{2}$/);
+  assert.equal(live.clock(new Date('2026-10-11T11:05:00Z')), '14:05');
+  assert.equal(sent[0].payload.openCount, undefined); // لا تفاصيل داخلية في الإشعار
+});
+
+test('التحديث الدوري: أثناء الدوام فقط، ويرسل حتى لو لم يتغيّر شيء', async () => {
+  reset();
+  await live.sendNow();
+  sent.length = 0;
+  assert.equal(await live.sendNow(), 0); // نفس النص ← لا شيء
+  assert.equal(await live.sendNow({ force: true, onlyOpen: true }), 2); // تحديث دوري ← يُرسل
+  OPEN = [];
+  sent.length = 0;
+  assert.equal(await live.sendNow({ force: true, onlyOpen: true }), 0); // لا جرد مفتوح ← لا إزعاج خارج الدوام
+  assert.equal(sent.length, 0);
+});

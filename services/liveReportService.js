@@ -18,6 +18,9 @@
 const LiveReportSub = require('../models/LiveReportSub');
 
 const DEBOUNCE_MS = Number(process.env.LIVE_REPORT_DEBOUNCE_MS || 15000);
+// تحديث دوري ما دام هناك جرد مفتوح (الدوام): لا يبقى التقرير قديماً عند فتح القفل
+// حتى لو لم يتغيّر شيء. 0 = بلا تحديث دوري.
+const REFRESH_MIN = Number(process.env.LIVE_REPORT_REFRESH_MIN != null ? process.env.LIVE_REPORT_REFRESH_MIN : 15);
 const TAG = 'diyar-live';
 
 let webpush = null;
@@ -41,13 +44,18 @@ function wp() {
 
 const m3 = (v) => Number(v || 0).toFixed(3);
 
+/** «14:35» بتوقيت عمّان — يظهر في العنوان فيعرف المدير عمر الأرقام عند فتح القفل. */
+function clock(at = new Date()) {
+  try { return at.toLocaleTimeString('en-GB', { timeZone: 'Asia/Amman', hour: '2-digit', minute: '2-digit', hour12: false }); } catch (_) { return ''; }
+}
+
 /** نص التقرير من ملخص الجرد. */
-function formatReport(summary, openNames) {
+function formatReport(summary, openNames, at) {
   const sales = summary ? summary.successTotal : 0;
   const exp = summary ? summary.expensesTotal : 0;
   const who = (openNames || []).filter(Boolean);
   return {
-    title: '📊 ديار الأنباط — الآن',
+    title: `📊 ديار الأنباط — ${at ? clock(at) : 'الآن'}`,
     body: `المبيعات ${m3(sales)} د.أ · المصروفات ${m3(exp)} د.أ\n${who.length ? `الجرد مفتوح: ${who.join('، ')}` : 'لا يوجد جرد مفتوح'}`,
   };
 }
@@ -61,7 +69,9 @@ async function buildReport() {
     ShiftSession.find({ status: 'open', scope: 'mine' }).select('userName').sort({ openedAt: 1 }).lean(),
   ]);
   const names = [...new Set(open.map((s) => s.userName).filter(Boolean))];
-  return formatReport(summary, names);
+  const r = formatReport(summary, names, new Date());
+  r.openCount = names.length;
+  return r;
 }
 
 /** المشتركون الذين ما زالوا يملكون الصلاحية (المستخدم معطّل أو سُحبت صلاحيته ← لا يصله شيء). */
@@ -76,7 +86,7 @@ async function eligibleSubs(filter = {}) {
 }
 
 async function pushTo(subs, report) {
-  const payload = JSON.stringify({ ...report, tag: TAG, url: 'dashboard.html#orders', at: Date.now() });
+  const payload = JSON.stringify({ title: report.title, body: report.body, tag: TAG, url: 'dashboard.html#orders', at: Date.now() });
   let okCount = 0;
   await Promise.all(subs.map(async (s) => {
     try {
@@ -93,12 +103,13 @@ async function pushTo(subs, report) {
   return okCount;
 }
 
-/** يرسل الآن للجميع إن تغيّر النص (force: يرسل حتى لو لم يتغير). */
-async function sendNow({ force = false } = {}) {
+/** يرسل الآن للجميع إن تغيّر النص (force: يرسل حتى لو لم يتغير؛ onlyOpen: فقط أثناء الدوام). */
+async function sendNow({ force = false, onlyOpen = false } = {}) {
   if (!enabled() || sending) return 0;
   sending = true;
   try {
     const report = await buildReport();
+    if (onlyOpen && !report.openCount) return 0;
     if (!force && report.body === lastBody) return 0;
     const subs = await eligibleSubs();
     if (!subs.length) return 0;
@@ -127,4 +138,14 @@ function touch() {
   if (timer.unref) timer.unref();
 }
 
-module.exports = { enabled, publicKey, touch, sendNow, sendToUser, buildReport, formatReport, _reset: () => { lastBody = ''; if (timer) clearTimeout(timer); timer = null; } };
+/** يبدأ التحديث الدوري (يُستدعى مرة عند تشغيل الخادم). */
+let refreshT = null;
+function start() {
+  if (!enabled() || !(REFRESH_MIN > 0) || refreshT) return;
+  refreshT = setInterval(() => {
+    sendNow({ force: true, onlyOpen: true }).catch((e) => console.error('liveReport refresh:', e.message));
+  }, REFRESH_MIN * 60000);
+  if (refreshT.unref) refreshT.unref();
+}
+
+module.exports = { enabled, publicKey, touch, sendNow, sendToUser, buildReport, formatReport, start, clock, _reset: () => { lastBody = ''; if (timer) clearTimeout(timer); timer = null; } };
