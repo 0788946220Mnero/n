@@ -17,6 +17,11 @@ const ID_RX = /^[A-Za-z0-9-]{2,64}$/;
 const MISSING_GRACE_MS = Number(process.env.IMAGE_NODES_MISSING_GRACE_MS || 120000); // ملفات تُجلب الآن — لا إنذار فوراً
 const OFFLINE_MS = Number(process.env.IMAGE_NODES_OFFLINE_MS || 5 * 60000);
 
+const HEX64 = /^[a-f0-9]{64}$/;
+const sha = (s) => crypto.createHash('sha256').update(String(s)).digest('hex');
+const sameHash = (a, b) => typeof a === 'string' && typeof b === 'string' && a.length === 64 && b.length === 64 &&
+  crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
+const nameOf = (u) => (u && (u.name || u.username)) || '';
 const secret = () => crypto.randomBytes(36).toString('base64').replace(/[+/=]/g, (c) => ({ '+': 'A', '/': 'B', '=': '' }[c]));
 const cleanUrl = (u) => String(u || '').trim().replace(/\/+$/, '').slice(0, 200);
 const label = (n) => n.name || n.machine || n.nodeId;
@@ -57,8 +62,9 @@ async function join(user, body) {
   if (!d.baseUrl && body.publicUrl) $set.baseUrl = d.baseUrl = cleanUrl(body.publicUrl);
   const node = {
     nodeId, name: String(body.name || '').slice(0, 60), machine: String(body.machine || '').slice(0, 60),
-    lanUrl: cleanUrl(body.lanUrl), joinedBy: (user && (user.name || user.username)) || '', lastSeen: new Date(), running: true,
+    lanUrl: cleanUrl(body.lanUrl), joinedBy: nameOf(user), lastSeen: new Date(), running: true,
   };
+  if (HEX64.test(String(body.proofHash || ''))) node.proofHash = String(body.proofHash);
   const nodes = d.nodes.filter((n) => n.nodeId !== nodeId);
   const prev = d.nodes.find((n) => n.nodeId === nodeId);
   nodes.push({ ...(prev || {}), ...node, joinedAt: (prev && prev.joinedAt) || new Date() });
@@ -101,8 +107,84 @@ async function heartbeat(body, notify) {
     nodes[i] = { ...x, issue };
   });
   await ImageCloud.updateOne({ key: 'main' }, { $set: { nodes } });
-  return { peers: peersFor(nodes, nodeId), issue: nodes[idx].issue || '' };
+  const out = { peers: peersFor(nodes, nodeId), issue: nodes[idx].issue || '' };
+  // جهاز أثبت هويته بسرّه: يستلم الرابط العام ورمز النفق كما ضبطهما المدير من اللوحة
+  if (body.proof && sameHash(sha(body.proof), n.proofHash)) out.config = { publicUrl: d.baseUrl || '', tunnelToken: d.tunnelToken || '' };
+  return out;
 }
+
+/* ═══ الربط التلقائي: طلب ← موافقة ← استلام ═══ */
+
+/**
+ * DiyarPOS يطلب الربط عند تشغيله (بأي حساب مسجّل). يرسل بصمة سرٍّ يبقى عنده؛ الأسرار لا تُسلَّم
+ * إلا لمن يملك السر بعد موافقة المدير. حساب يملك صلاحية «سحابة الصور» يُوافَق عليه فوراً.
+ * يُستدعى دورياً — فهو أيضاً سؤال «هل وافق المدير؟».
+ */
+async function request(user, body, { canApprove = false, onNew } = {}) {
+  const nodeId = String((body && body.nodeId) || '');
+  if (!ID_RX.test(nodeId)) throw Object.assign(new Error('معرّف الجهاز غير صالح'), { status: 400 });
+  const proofHash = String(body.proofHash || '').toLowerCase();
+  if (!HEX64.test(proofHash)) throw Object.assign(new Error('بصمة الجهاز غير صالحة'), { status: 400 });
+  const d = await doc();
+  const node = d.nodes.find((n) => n.nodeId === nodeId);
+  if (node && sameHash(node.proofHash, proofHash)) return { status: 'joined' };
+
+  const all = d.requests || [];
+  const prev = all.find((r) => r.nodeId === nodeId);
+  const now = new Date();
+  const fresh = !prev || prev.proofHash !== proofHash; // جهاز أعيد تثبيته = طلب جديد
+  const r = fresh
+    ? { nodeId, proofHash, requestedBy: nameOf(user), requestedAt: now, status: 'pending', approvedBy: '', approvedAt: null }
+    : { ...prev };
+  Object.assign(r, {
+    name: String(body.name || r.name || '').slice(0, 60), machine: String(body.machine || r.machine || '').slice(0, 60),
+    lanUrl: cleanUrl(body.lanUrl || r.lanUrl), publicUrl: cleanUrl(body.publicUrl || r.publicUrl), lastSeen: now,
+  });
+  if (r.status !== 'approved' && canApprove) Object.assign(r, { status: 'approved', approvedBy: nameOf(user), approvedAt: now });
+  const requests = all.filter((x) => x.nodeId !== nodeId).concat(r).slice(-20);
+  await ImageCloud.updateOne({ key: 'main' }, { $set: { requests } }, { upsert: true });
+  if (fresh && r.status === 'pending' && onNew) onNew(r);
+  return { status: r.status, approvedBy: r.approvedBy || '' };
+}
+
+/** موافقة المدير أو رفضه. */
+async function decide(user, nodeId, approve) {
+  const d = await doc();
+  const all = d.requests || [];
+  const r = all.find((x) => x.nodeId === nodeId);
+  if (!r) throw Object.assign(new Error('لا يوجد طلب ربط من هذا الجهاز'), { status: 404 });
+  Object.assign(r, approve
+    ? { status: 'approved', approvedBy: nameOf(user), approvedAt: new Date() }
+    : { status: 'rejected', approvedBy: nameOf(user), approvedAt: new Date() });
+  await ImageCloud.updateOne({ key: 'main' }, { $set: { requests: all } });
+  return r;
+}
+
+/**
+ * الجهاز المُوافَق عليه يستلم: يثبت أنه صاحب الطلب بالسر نفسه، فينضم للمزامنة
+ * (الأسرار وقائمة الأجهزة) ويُحذف طلبه.
+ */
+async function claim(body) {
+  const nodeId = String((body && body.nodeId) || '');
+  const d = await doc();
+  const all = d.requests || [];
+  const r = all.find((x) => x.nodeId === nodeId);
+  if (!r || !body.proof || !sameHash(sha(body.proof), r.proofHash)) {
+    throw Object.assign(new Error('هذا الجهاز لم يطلب الربط أو تغيّر — أعد تشغيل DiyarPOS'), { status: 403 });
+  }
+  if (r.status !== 'approved') {
+    throw Object.assign(new Error(r.status === 'rejected' ? 'رفض مدير النظام ربط هذا الجهاز' : 'بانتظار موافقة مدير النظام'), { status: 409 });
+  }
+  const out = await join({ name: r.approvedBy }, { ...body, proofHash: r.proofHash, name: body.name || r.name, machine: body.machine || r.machine });
+  await ImageCloud.updateOne({ key: 'main' }, { $pull: { requests: { nodeId } } });
+  return { ...out, approvedBy: r.approvedBy, request: r };
+}
+
+/** الطلبات للعرض في اللوحة (المنتظرة والمرفوضة). */
+const requestsView = (requests) => (requests || []).filter((r) => r.status !== 'approved').map((r) => ({
+  nodeId: r.nodeId, name: r.name, machine: r.machine, requestedBy: r.requestedBy, requestedAt: r.requestedAt,
+  lastSeen: r.lastSeen, status: r.status,
+}));
 
 async function remove(nodeId) {
   const d = await doc();
@@ -121,4 +203,4 @@ function view(nodes) {
   }));
 }
 
-module.exports = { join, heartbeat, remove, view, issueOf, peersFor, ID_RX };
+module.exports = { join, heartbeat, remove, view, issueOf, peersFor, request, decide, claim, requestsView, sha, ID_RX };

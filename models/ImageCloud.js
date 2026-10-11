@@ -8,6 +8,9 @@ const imageCloudSchema = new mongoose.Schema(
   {
     key: { type: String, default: 'main', unique: true },
     enabled: { type: Boolean, default: false },
+    // المدير يريدها مفعّلة لكن الجهاز لم يرد بعد (رمز النفق في طريقه إليه) ← تُفعَّل تلقائياً عند أول رد
+    wantEnabled: { type: Boolean, default: false },
+    lastAutoTry: { type: Date, default: null },
     baseUrl: { type: String, default: '', trim: true },   // الرابط العام (نفق Cloudflare مثلاً)
     projectId: { type: String, default: '', trim: true },
     apiKey: { type: String, default: '', select: false },
@@ -39,6 +42,23 @@ const imageCloudSchema = new mongoose.Schema(
       missingSince: { type: Date, default: null },
       peers: [{ _id: false, nodeId: String, connected: Boolean, pendingEvents: Number, lastError: String }],
       issue: { type: String, default: '' },         // آخر مشكلة أُبلغ عنها (لإشعار مرة واحدة)
+      proofHash: { type: String, default: '' },     // بصمة سر الجهاز — يثبت هويته في النبض
+    }],
+    // ═══ طلبات الربط: DiyarPOS يطلب بأي حساب، ومدير النظام يوافق من اللوحة ═══
+    requests: [{
+      _id: false,
+      nodeId: { type: String, required: true },
+      name: { type: String, default: '' },
+      machine: { type: String, default: '' },
+      lanUrl: { type: String, default: '' },
+      publicUrl: { type: String, default: '' },
+      proofHash: { type: String, default: '' },     // sha256 لسر يبقى على الجهاز — لا يستلم الأسرار غيره
+      requestedBy: { type: String, default: '' },
+      requestedAt: { type: Date, default: Date.now },
+      lastSeen: { type: Date, default: null },
+      status: { type: String, enum: ['pending', 'approved', 'rejected'], default: 'pending' },
+      approvedBy: { type: String, default: '' },
+      approvedAt: { type: Date, default: null },
     }],
     migration: {
       status: { type: String, enum: ['idle', 'running', 'done', 'failed', 'interrupted'], default: 'idle' },

@@ -29,6 +29,9 @@ ImageCloud.updateOne = async (f, u) => {
     o[parts[0]] = v;
   });
   Object.entries(u.$inc || {}).forEach(([k, v]) => { DOC[k] = (DOC[k] || 0) + v; });
+  Object.entries(u.$pull || {}).forEach(([k, cond]) => {
+    DOC[k] = (DOC[k] || []).filter((x) => !Object.entries(cond).every(([ck, cv]) => x[ck] === cv));
+  });
   return { modifiedCount: 1 };
 };
 
@@ -208,11 +211,13 @@ test('نقل كل الصور: تُرفع وتُستبدل الروابط، وا�
 });
 
 /* ── الإعدادات (المتحكم) ── */
-function call(fn, body = {}, query = {}) {
+const ADMIN = { name: 'مروان', role: 'admin' };
+const CASHIER = { name: 'سامي', role: 'cashier', permissions: [] };
+function call(fn, body = {}, query = {}, user = ADMIN, params = {}) {
   const c = require('../controllers/imageCloudController');
   return new Promise((resolve) => {
     const res = { code: 200, status(x) { this.code = x; return this; }, json(b) { resolve({ code: this.code, body: b }); } };
-    c[fn]({ user: { name: 'مروان', role: 'admin' }, body, query }, res, (e) => resolve({ code: 500, body: { message: e && e.message } }));
+    c[fn]({ user, body, query, params }, res, (e) => resolve({ code: 500, body: { message: e && e.message } }));
   });
 }
 
@@ -310,4 +315,150 @@ test('الأسرار لا تظهر في عرض الإعدادات', async () => 
   const txt = JSON.stringify(r.body);
   assert.equal(r.body.cloud.nodes.length, 2);
   assert.ok(!txt.includes(DOC.syncSecret) && !txt.includes('TUN') && !txt.includes('S'.repeat(40)));
+});
+
+/* ── الربط التلقائي: DiyarPOS يطلب ← المدير يوافق من الهاتف ← الجهاز يستلم (بلا نسخ مفتاح) ── */
+const crypto = require('crypto');
+const proofOf = (s) => crypto.createHash('sha256').update(s).digest('hex');
+const realtime = require('../services/realtimeService');
+
+test('طلب ربط من حساب كاشير: ينتظر الموافقة، وإشعار واحد لمدير النظام', async () => {
+  reset({ enabled: false, nodes: [], requests: [] });
+  const sent = []; const orig = realtime.broadcast; realtime.broadcast = (t, p) => sent.push({ t, ...p });
+  try {
+    let r = await call('nodeRequest', { nodeId: 'pos-cash-1a2b', name: 'CASHIER', proofHash: proofOf('SECRET-1'), lanUrl: 'http://192.168.1.20:7443' }, {}, CASHIER);
+    assert.equal(r.code, 200);
+    assert.equal(r.body.status, 'pending');
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0].t, 'imagecloud.request');
+    assert.match(sent[0].message, /CASHIER يطلب ربط سحابة الصور/);
+    r = await call('nodeRequest', { nodeId: 'pos-cash-1a2b', name: 'CASHIER', proofHash: proofOf('SECRET-1') }, {}, CASHIER);
+    assert.equal(r.body.status, 'pending');
+    assert.equal(sent.length, 1, 'الاستطلاع المتكرر لا يكرر الإشعار');
+    r = await call('nodeRequest', { nodeId: 'pos-cash-1a2b', proofHash: 'zz' }, {}, CASHIER);
+    assert.equal(r.code, 400);
+    // الطلب يظهر في اللوحة
+    r = await call('get');
+    assert.equal(r.body.cloud.requests.length, 1);
+    assert.equal(r.body.cloud.requests[0].name, 'CASHIER');
+    assert.equal(r.body.cloud.requests[0].requestedBy, 'سامي');
+    assert.ok(!JSON.stringify(r.body).includes(proofOf('SECRET-1')), 'البصمة لا تُعرض');
+  } finally { realtime.broadcast = orig; }
+});
+
+test('قبل الموافقة لا أسرار، وبسرّ خاطئ لا أسرار — حتى بعد الموافقة', async () => {
+  let r = await call('nodeClaim', { nodeId: 'pos-cash-1a2b', proof: 'SECRET-1' }, {}, CASHIER);
+  assert.equal(r.code, 409);
+  assert.match(r.body.message, /بانتظار موافقة/);
+  r = await call('nodeDecide', { approve: true }, {}, ADMIN, { nodeId: 'pos-cash-1a2b' });
+  assert.equal(r.code, 200);
+  assert.equal(r.body.cloud.requests.length, 0, 'المُوافَق عليه يختفي من قائمة الانتظار');
+  r = await call('nodeRequest', { nodeId: 'pos-cash-1a2b', proofHash: proofOf('SECRET-1') }, {}, CASHIER);
+  assert.equal(r.body.status, 'approved');
+  assert.equal(r.body.approvedBy, 'مروان');
+  r = await call('nodeClaim', { nodeId: 'pos-cash-1a2b', proof: 'WRONG' }, {}, CASHIER);
+  assert.equal(r.code, 403);
+  assert.ok(!r.body.syncSecret);
+});
+
+test('الاستلام: ينضم للمزامنة ويحفظ المفتاح؛ بلا رابط عام لا يُفعَّل ويشرح السبب', async () => {
+  const sent = []; const orig = realtime.broadcast; realtime.broadcast = (t, p) => sent.push({ t, ...p });
+  try {
+    const r = await call('nodeClaim', {
+      nodeId: 'pos-cash-1a2b', proof: 'SECRET-1', name: 'CASHIER', lanUrl: 'http://192.168.1.20:7443',
+      apiKey: 'isk_abcdefghijklmnop', projectId: 'diyar', signingSecret: 'S'.repeat(40),
+    }, {}, CASHIER);
+    assert.equal(r.code, 200);
+    assert.ok(r.body.syncSecret.length >= 32);
+    assert.equal(r.body.signingSecret, 'S'.repeat(40));
+    assert.equal(r.body.link.enabled, false);
+    assert.match(r.body.link.message, /الرابط العام/);
+    assert.equal(DOC.apiKey, 'isk_abcdefghijklmnop', 'المفتاح حُفظ تلقائياً');
+    assert.equal(DOC.enabled, false);
+    assert.equal(DOC.requests.length, 0, 'الطلب حُذف بعد الاستلام');
+    assert.ok(DOC.nodes[0].proofHash === proofOf('SECRET-1'));
+    assert.ok(sent.some((m) => m.t === 'imagecloud.alert' && /CASHIER/.test(m.message)));
+    // الطلب التالي من نفس الجهاز: «منضم»
+    const again = await call('nodeRequest', { nodeId: 'pos-cash-1a2b', proofHash: proofOf('SECRET-1') }, {}, CASHIER);
+    assert.equal(again.body.status, 'joined');
+  } finally { realtime.broadcast = orig; }
+});
+
+test('رمز النفق والرابط العام من الهاتف ← يصلان للجهاز في نبضه (لمن يثبت هويته فقط)', async () => {
+  let r = await call('update', { tunnelToken: 'eyJ-TUNNEL-TOKEN', baseUrl: 'https://img.example.com' });
+  assert.equal(r.body.cloud.hasTunnel, true);
+  assert.ok(!JSON.stringify(r.body).includes('eyJ-TUNNEL-TOKEN'), 'الرمز لا يُعاد للوحة');
+  const nodes = require('../services/imageCloudNodes');
+  let hb = await nodes.heartbeat({ nodeId: 'pos-cash-1a2b', running: true });
+  assert.equal(hb.config, undefined, 'بلا سر الجهاز: لا رمز');
+  hb = await nodes.heartbeat({ nodeId: 'pos-cash-1a2b', running: true, proof: 'WRONG' });
+  assert.equal(hb.config, undefined);
+  hb = await nodes.heartbeat({ nodeId: 'pos-cash-1a2b', running: true, proof: 'SECRET-1' });
+  assert.deepEqual(hb.config, { publicUrl: 'https://img.example.com', tunnelToken: 'eyJ-TUNNEL-TOKEN' });
+});
+
+test('مدير النظام على DiyarPOS ← موافقة فورية، والرفض يمنع الاستلام', async () => {
+  let r = await call('nodeRequest', { nodeId: 'pos-office-9f8e', name: 'OFFICE', proofHash: proofOf('SECRET-2') }, {}, ADMIN);
+  assert.equal(r.body.status, 'approved');
+  r = await call('nodeRequest', { nodeId: 'pos-x-0001', name: 'X', proofHash: proofOf('SECRET-3') }, {}, CASHIER);
+  assert.equal(r.body.status, 'pending');
+  r = await call('nodeDecide', { approve: false }, {}, ADMIN, { nodeId: 'pos-x-0001' });
+  assert.equal(r.body.cloud.requests.find((x) => x.nodeId === 'pos-x-0001').status, 'rejected');
+  r = await call('nodeClaim', { nodeId: 'pos-x-0001', proof: 'SECRET-3' }, {}, CASHIER);
+  assert.equal(r.code, 409);
+  assert.match(r.body.message, /رفض/);
+});
+
+test('الاستلام مع رابط عام يعمل ← تُفعَّل السحابة تلقائياً', { skip: !LIVE }, async () => {
+  reset({ enabled: false, nodes: [], requests: [] });
+  await call('nodeRequest', { nodeId: 'pos-live-0001', name: 'LIVE', proofHash: proofOf('S-LIVE') }, {}, ADMIN);
+  const r = await call('nodeClaim', { nodeId: 'pos-live-0001', proof: 'S-LIVE', apiKey: IS_KEY, publicUrl: `${IS_URL}/`, projectId: 'diyar' }, {}, CASHIER);
+  assert.equal(r.code, 200);
+  assert.equal(r.body.link.enabled, true, r.body.link.message);
+  assert.equal(DOC.enabled, true);
+  assert.equal(DOC.baseUrl, IS_URL);
+});
+
+test('أول جهاز: الرابط ورمز النفق من الهاتف ← تُفعَّل السحابة تلقائياً عند أول رد للجهاز', async () => {
+  // خدمة صور وهمية «تستيقظ» لاحقاً (كأن النفق اتصل بعد وصول الرمز للجهاز)
+  let up = false;
+  const srv = http.createServer((req, res) => {
+    if (!up) { res.writeHead(502); return res.end('{}'); }
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(req.url.startsWith('/api/v1/health') ? '{"node":"pos-first"}' : '{"items":[]}');
+  });
+  await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+  const url = `http://127.0.0.1:${srv.address().port}`;
+  const sent = []; const orig = realtime.broadcast; realtime.broadcast = (t, p) => sent.push({ t, ...p });
+  try {
+    reset({ enabled: false, nodes: [], requests: [] });
+    await call('nodeRequest', { nodeId: 'pos-first-0001', name: 'CASHIER', proofHash: proofOf('F1') }, {}, ADMIN);
+    let r = await call('nodeClaim', { nodeId: 'pos-first-0001', proof: 'F1', apiKey: 'isk_firstdevicekey1', projectId: 'diyar' }, {}, CASHIER);
+    assert.equal(r.body.link.enabled, false);
+    assert.equal(DOC.wantEnabled, true, 'أول جهاز: يُراد تفعيلها');
+    // المدير يضع الرابط ورمز النفق من الهاتف ويفعّل — الجهاز لم يستلم الرمز بعد
+    r = await call('update', { enabled: true, baseUrl: url, tunnelToken: 'eyJ-T' });
+    assert.equal(r.code, 200, r.body.message);
+    assert.equal(r.body.pending, true);
+    assert.match(r.body.message, /تلقائياً/);
+    assert.equal(r.body.cloud.enabled, false);
+    assert.equal(r.body.cloud.wantEnabled, true);
+    // نبض الجهاز: ما زال لا يرد ← لا تفعيل
+    await call('nodeHeartbeat', { nodeId: 'pos-first-0001', running: true, proof: 'F1' }, {}, CASHIER);
+    await wait(100);
+    assert.equal(DOC.enabled, false);
+    // النفق اتصل؛ النبض التالي (بعد 20 ثانية على الأقل) ← تفعيل وإشعار
+    up = true;
+    DOC.lastAutoTry = new Date(Date.now() - 30000).toISOString();
+    await call('nodeHeartbeat', { nodeId: 'pos-first-0001', running: true, proof: 'F1' }, {}, CASHIER);
+    for (let i = 0; i < 40 && !DOC.enabled; i++) await wait(25);
+    assert.equal(DOC.enabled, true, 'فُعّلت تلقائياً');
+    assert.ok(sent.some((m) => /فُعّلت سحابة الصور تلقائياً/.test(m.message || '')));
+    // المدير يوقفها صراحة ← لا تفعيل تلقائي بعدها
+    await call('update', { enabled: false });
+    DOC.lastAutoTry = null;
+    await call('nodeHeartbeat', { nodeId: 'pos-first-0001', running: true }, {}, CASHIER);
+    await wait(100);
+    assert.equal(DOC.enabled, false);
+  } finally { realtime.broadcast = orig; srv.close(); }
 });
