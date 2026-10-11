@@ -66,6 +66,8 @@ const update = async (req, res) => {
     projectId: b.projectId != null ? String(b.projectId).trim().slice(0, 64) : (cur && cur.projectId) || '',
     apiKey: typeof b.apiKey === 'string' && b.apiKey.trim() ? b.apiKey.trim() : (cur && cur.apiKey) || '',
   };
+  // رابط محلي (127.0.0.1 / 192.168.x — من DiyarPOS بلا رابط عام) لا يصله الخادم أبداً ← النفق
+  if (relay.isPrivateUrl(next.baseUrl)) next.baseUrl = '';
   // بلا رابط خاص: الصور تمر عبر نفق خادم ديار (لا Cloudflare ولا إعداد)
   if (next.enabled && !next.baseUrl) next.baseUrl = relay.baseFor(req);
   if (next.baseUrl && !/^https?:\/\/[^\s/]+/i.test(next.baseUrl)) return res.status(400).json({ success: false, message: 'الرابط غير صالح — مثال: https://images.diyaralanbat.com' });
@@ -78,9 +80,12 @@ const update = async (req, res) => {
     if (t.ok) next.nodeName = t.node || '';
     else if (!b.force) {
       // أجهزة منضمة: الرابط ورمز النفق يصلانها مع نبضها التالي ← تُفعَّل تلقائياً حين ترد
-      if (!(cur && (cur.nodes || []).length)) return res.status(400).json({ success: false, message: t.message, test: t });
+      // عبر النفق: الجهاز قد لم يتصل بعد (ينضم الآن) ← يُحفظ ويُفعَّل حين يتصل
+      if (!(cur && (cur.nodes || []).length) && !relay.isRelayUrl(next.baseUrl)) return res.status(400).json({ success: false, message: t.message, test: t });
       next.enabled = false;
-      pending = `حُفظ — يصل الرابط ورمز النفق لجهاز الكاشير خلال دقيقة، وتُفعَّل السحابة تلقائياً حين يرد (${t.message})`;
+      pending = relay.isRelayUrl(next.baseUrl)
+        ? `حُفظ — الصور تُعرض عبر خادم ديار، وتُفعَّل السحابة تلقائياً حين يتصل جهاز الكاشير ويرسل مفتاحه (خلال دقيقة) — ${t.message}`
+        : `حُفظ — يصل الرابط ورمز النفق لجهاز الكاشير خلال دقيقة، وتُفعَّل السحابة تلقائياً حين يرد (${t.message})`;
     }
   }
   const $set = { ...next, updatedByName: nameOf(req.user) };
@@ -105,8 +110,8 @@ const update = async (req, res) => {
 async function tryAutoEnable(req, force = false) {
   let cur = await ImageCloud.findOne({ key: 'main' }).select('+apiKey').lean();
   if (!cur || cur.enabled || !cur.wantEnabled || !cur.apiKey) return;
-  // لا رابط خاص وجهاز متصل بالنفق ← الصور تمر عبر هذا الخادم
-  if (!cur.baseUrl && relay.connectedCount() > 0 && req) {
+  // لا رابط خاص (أو رابط محلي لا يُوصَل إليه) وجهاز متصل بالنفق ← الصور تمر عبر هذا الخادم
+  if ((!cur.baseUrl || relay.isPrivateUrl(cur.baseUrl)) && relay.connectedCount() > 0 && req) {
     const base = relay.baseFor(req);
     if (!base) return;
     await ImageCloud.updateOne({ key: 'main' }, { $set: { baseUrl: base } });
@@ -219,8 +224,9 @@ const nodeClaim = async (req, res) => {
   // مفتاح السحابة العاملة يبقى (المفاتيح تتزامن بين الأجهزة)؛ يُستبدل فقط إن لم تكن مفعّلة
   if (apiKey && (!cur.apiKey || !cur.enabled)) { $set.apiKey = apiKey; $set.keyNodeId = out.nodeId; }
   // بلا رابط عام خاص (Cloudflare…): الصور تمر عبر نفق هذا الخادم تلقائياً
-  const baseUrl = cur.baseUrl || imageCloud.trimUrl(b.publicUrl || '') || relay.baseFor(req);
-  if (!cur.baseUrl && baseUrl) $set.baseUrl = baseUrl;
+  const usable = (u) => (u && !relay.isPrivateUrl(u) ? u : '');
+  const baseUrl = usable(cur.baseUrl) || usable(imageCloud.trimUrl(b.publicUrl || '')) || relay.baseFor(req);
+  if (baseUrl !== cur.baseUrl) $set.baseUrl = baseUrl;
   if (!cur.projectId) $set.projectId = String(b.projectId || 'diyar').slice(0, 64);
 
   let link;

@@ -241,3 +241,29 @@ test('إزالة الجهاز صاحب المفتاح من اللوحة ← يُ
   assert.ok(!DOC.keyNodeId, 'صاحب المفتاح نُسي');
   assert.ok(!DOC.nodes.some((n) => n.nodeId === 'pos-relay-1'));
 });
+
+test('رابط محلي محفوظ (127.0.0.1 من «ربط بالخادم» بلا رابط عام) ← يُستبدل بنفق الخادم وتُفعَّل', async () => {
+  assert.equal(relay.isPrivateUrl('http://127.0.0.1:5080'), true);
+  assert.equal(relay.isPrivateUrl('http://192.168.1.50:5080'), true);
+  assert.equal(relay.isPrivateUrl('https://images.diyaralanbat.com'), false);
+  relay.reset();
+  DOC = { key: 'main', enabled: false, wantEnabled: true, apiKey: 'isk_relaytestkey123', keyNodeId: 'pos-relay-1', projectId: 'diyar',
+    baseUrl: 'http://127.0.0.1:5080', lastError: 'جهاز الصور لا يرد على http://127.0.0.1:5080',
+    nodes: [{ nodeId: 'pos-relay-1', name: 'CASHIER', proofHash: sha('SECRET-R'), lastSeen: new Date().toISOString() }] };
+  imageCloud.invalidate();
+  dev = await device('pos-relay-1', 'SECRET-R');
+  await fetch(base + '/api/image-cloud/nodes/heartbeat', {
+    method: 'POST', headers: { Authorization: 'Bearer CASHIER', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ nodeId: 'pos-relay-1', running: true, proof: 'SECRET-R' }),
+  });
+  for (let i = 0; i < 40 && !DOC.enabled; i++) await wait(25);
+  assert.match(DOC.baseUrl, /\/api\/image-cloud\/relay$/, 'الرابط المحلي استُبدل بالنفق');
+  assert.equal(DOC.enabled, true, DOC.lastError);
+  // «ربط بالخادم» من نسخة قديمة يرسل الرابط المحلي ← النفق بدل الرفض
+  const r = await fetch(base + '/api/image-cloud', { method: 'PUT', headers: { Authorization: 'Bearer ADMIN', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled: true, baseUrl: 'http://127.0.0.1:5080', apiKey: 'isk_relaytestkey123', nodeId: 'pos-relay-1' }) });
+  const j = await r.json();
+  assert.equal(r.status, 200, j.message);
+  assert.equal(j.cloud.viaRelay, true);
+  assert.equal(j.cloud.enabled, true);
+});

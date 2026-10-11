@@ -11,6 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const http = require('http');
 
+process.env.IMAGE_CLOUD_ALLOW_PRIVATE = '1'; // خدمة الاختبار على 127.0.0.1
 const IS_URL = process.env.IMAGE_STORAGE_TEST_URL || '';
 const IS_KEY = process.env.IMAGE_STORAGE_TEST_KEY || '';
 const LIVE = !!(IS_URL && IS_KEY);

@@ -263,10 +263,22 @@ function baseFor(req) {
 }
 const isRelayUrl = (u) => typeof u === 'string' && /\/api\/image-cloud\/relay\/?$/.test(u.trim());
 
+/** رابط لا يصل إليه الخادم من الإنترنت أبداً (الجهاز نفسه أو شبكة محلية) — يُستبدل بنفق الخادم. */
+function isPrivateUrl(u) {
+  if (process.env.IMAGE_CLOUD_ALLOW_PRIVATE === '1') return false; // للاختبار على نفس الجهاز فقط
+  let h;
+  try { h = new URL(String(u || '').trim()).hostname.toLowerCase().replace(/^\[|\]$/g, ''); } catch (_) { return false; }
+  if (h === 'localhost' || h.endsWith('.local') || h === '0.0.0.0' || h === '::1') return true;
+  const m = h.match(/^(\d+)\.(\d+)\.\d+\.\d+$/);
+  if (!m) return false;
+  const a = Number(m[1]); const b = Number(m[2]);
+  return a === 127 || a === 10 || (a === 192 && b === 168) || (a === 172 && b >= 16 && b <= 31) || (a === 169 && b === 254);
+}
+
 /** للاختبار: إغلاق كل الاتصالات. */
 function reset() { for (const n of nodes.values()) { try { n.ws.terminate(); } catch (_) { /* */ } } nodes.clear(); clearCache(); }
 
 module.exports = {
   WS_PATH, MOUNT, init, handleUpgrade, request, relayFetch, serveMedia, baseFor, isRelayUrl,
-  connectedCount, status, clearCache, cacheStats, reset, setPreferred, isConnected,
+  connectedCount, status, clearCache, cacheStats, reset, setPreferred, isConnected, isPrivateUrl,
 };
