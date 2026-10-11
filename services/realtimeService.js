@@ -226,6 +226,8 @@ const broadcast = (type, payload) => {
     }
     // الرسول: أوامر المدير لأجهزة المطعم فقط (لا لموظف السنتر ولا للمندوب)
     if (type.startsWith('relay.') && !['admin', 'manager', 'cashier'].includes(c.role)) return;
+    // تنبيهات سحابة الصور (ملفات ناقصة/جهاز منقطع): لمدير النظام فقط
+    if (type.startsWith('imagecloud.') && c.role !== 'admin') return;
     if (c.socket.readyState === 1) {
       try { c.socket.send(message); } catch (_) {}
     }

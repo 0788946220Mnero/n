@@ -2,6 +2,7 @@ const multer = require('multer');
 const path = require('path');
 const { CloudinaryStorage } = require('multer-storage-cloudinary');
 const cloudinary = require('../config/cloudinary');
+const imageCloud = require('../services/imageCloudService');
 
 /*
   ═══════════════════════════════════════════════════════════════
@@ -60,6 +61,60 @@ const mediaStorage = new CloudinaryStorage({
   },
 });
 
+/* ---------- سحابة الصور الخاصة أولاً، و Cloudinary احتياطاً ----------
+   إن فعّل مدير النظام «سحابة الصور» (ImageStorage داخل DiyarPOS): الصورة تُجمع في الذاكرة
+   (≤ 25MB) وتُرفع لجهاز المطعم، ويُحفظ رابطها العام في قاعدة البيانات كما كان رابط Cloudinary.
+   إن لم يرد الجهاز (مطفأ/بلا إنترنت) تُرفع نفس الصورة لـ Cloudinary فلا يتوقف شيء.
+   الفيديو يبقى على Cloudinary دائماً (سحابة الصور للصور فقط). */
+function cloudinaryFromBuffer(buf) {
+  return new Promise((resolve, reject) => {
+    const s = cloudinary.uploader.upload_stream(
+      { folder: FOLDER, resource_type: 'image', public_id: uniquePublicId(), transformation: IMAGE_TRANSFORMATION },
+      (err, r) => (err ? reject(err) : resolve(r))
+    );
+    s.end(buf);
+  });
+}
+
+class HybridStorage {
+  constructor(fallback) { this.fallback = fallback; }
+
+  _handleFile(req, file, cb) {
+    if (isVideoFile(file)) return this.fallback._handleFile(req, file, cb);
+    imageCloud.activeConfig().catch(() => null).then((cfg) => {
+      if (!cfg) return this.fallback._handleFile(req, file, cb);
+      const chunks = [];
+      file.stream.on('data', (c) => chunks.push(c));
+      file.stream.on('error', cb);
+      file.stream.on('end', async () => {
+        const buf = Buffer.concat(chunks);
+        try {
+          const r = await imageCloud.upload(buf, {
+            cfg, filename: file.originalname, mime: file.mimetype,
+            folder: imageCloud.folderFor(req), variant: imageCloud.variantFor(req),
+          });
+          imageCloud.note(true, null, { upload: true });
+          cb(null, { path: r.url, filename: r.id, size: buf.length, storage: 'imagecloud' });
+        } catch (err) {
+          // رفض حقيقي للملف (ليس صورة/تالف/كبير): نعيد رسالة الخدمة العربية كما هي
+          if ([413, 415, 422].includes(err.status)) return cb(Object.assign(new Error(err.message), { status: 400 }));
+          imageCloud.note(false, err, { fallback: true });
+          try {
+            const r = await cloudinaryFromBuffer(buf);
+            cb(null, { path: r.secure_url, filename: r.public_id, size: buf.length, storage: 'cloudinary' });
+          } catch (e2) { cb(e2); }
+        }
+      });
+    });
+  }
+
+  _removeFile(req, file, cb) {
+    if (file.storage === 'imagecloud') { imageCloud.remove(file.filename).finally(() => cb(null)); return; }
+    if (this.fallback._removeFile) return this.fallback._removeFile(req, file, cb);
+    return cb(null);
+  }
+}
+
 /* ---------- فلاتر الأنواع (رفض مبكر قبل رفع أي شيء إلى Cloudinary) ---------- */
 const imageFileFilter = (req, file, cb) => {
   const allowedTypes = /jpeg|jpg|png|webp/;
@@ -83,7 +138,7 @@ const mediaFileFilter = (req, file, cb) => {
 
 /* ---------- نُسَخ multer (بنفس أسماء الـ exports السابقة) ---------- */
 const upload = multer({
-  storage: imageStorage,
+  storage: new HybridStorage(imageStorage),
   fileFilter: imageFileFilter,
   // 25MB — صور الجوالات الحديثة كبيرة؛ تُضغَط تلقائياً على Cloudinary بعد الرفع
   limits: { fileSize: 25 * 1024 * 1024 },
@@ -91,10 +146,11 @@ const upload = multer({
 
 // رفع يدعم الصور والفيديو معاً (يُستخدم لخلفية الصفحة الرئيسية)
 const uploadMedia = multer({
-  storage: mediaStorage,
+  storage: new HybridStorage(mediaStorage),
   fileFilter: mediaFileFilter,
   limits: { fileSize: 50 * 1024 * 1024 }, // 50MB — للفيديوهات
 });
 
 module.exports = upload;
 module.exports.uploadMedia = uploadMedia;
+module.exports.HybridStorage = HybridStorage;

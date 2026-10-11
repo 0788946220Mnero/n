@@ -38,6 +38,7 @@ const PERMISSIONS = [
   { key: 'center:monitor', label: 'مراقبة موظفي السنتر: اتصالهم وانقطاعهم وطلباتهم' },
   { key: 'voice:commands', label: 'مستقبل أوامر المدير (أوامر صوتية) — كل أمر يُنفَّذ بصلاحيات المستخدم نفسه' },
   { key: 'stats:live', label: 'التقرير الحي على شاشة القفل: المبيعات والمصروفات ومن جرده مفتوح (يُخفى حتى Face ID)' },
+  { key: 'images:cloud', label: 'سحابة الصور: ربط خادم الصور (DiyarPOS)، مفتاحه، ونقل الصور من Cloudinary' },
 ];
 
 const ALL_KEYS = PERMISSIONS.map((p) => p.key);
@@ -47,7 +48,7 @@ const ROLE_PERMISSIONS = {
   // رأس المال لمدير النظام وحده افتراضياً (يُمنح لغيره من «المستخدمون» عند الحاجة)
   // رأس المال وصرف الموظفين: لمدير النظام افتراضياً، ويُمنحان لغيره من «المستخدمون»
   // والأوامر الصوتية: لمدير النظام افتراضياً، ويمنحها لمن يريد
-  manager: ALL_KEYS.filter((k) => !['users:manage', 'capital:manage', 'employees:pay', 'voice:commands', 'stats:live'].includes(k)),
+  manager: ALL_KEYS.filter((k) => !['users:manage', 'capital:manage', 'employees:pay', 'voice:commands', 'stats:live', 'images:cloud'].includes(k)),
   cashier: [
     'orders:view',
     'orders:manage',
