@@ -110,6 +110,7 @@ app.use('/api/center', require('./routes/centerRoutes')); // بيع سنتر: ط
 app.use('/api/live-report', require('./routes/liveReportRoutes')); // التقرير الحي على شاشة القفل (Web Push)
 app.use('/api/relay', require('./routes/relayRoutes')); // الرسول: أوامر المدير من هاتفه لجهاز الكاشير
 app.use('/api/image-cloud', require('./routes/imageCloudRoutes')); // سحابة الصور الخاصة (ImageStorage داخل DiyarPOS) — مدير النظام
+app.use('/api/loyalty', require('./routes/loyaltyRoutes')); // الولاء: محفظة الزبون، الكاشير، الإدارة، Apple Wallet Web Service
 
 // فحص صحة الخادم — يفيد أيضاً لاختبار CORS من المتصفح
 app.get('/api/health', (req, res) => {
@@ -136,6 +137,8 @@ realtime.init(server);
 // نفق الصور: أجهزة DiyarPOS تتصل بنفسها هنا وتُعرض صورها عبر هذا الخادم (بلا Cloudflare)
 const imageRelay = require('./services/imageRelayService');
 realtime.onUpgrade(imageRelay.WS_PATH, imageRelay.handleUpgrade);
+// الولاء: تحديث بطاقات Apple/Google في الخلفية عند تغيّر أي رصيد
+require('./services/walletSync').start();
 
 server.listen(PORT, () => {
   console.log(`🚀 الخادم يعمل على المنفذ ${PORT}`);

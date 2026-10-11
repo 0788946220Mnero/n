@@ -18,6 +18,8 @@ const ShiftSession = require('../models/ShiftSession');
 const { logActivity } = require('../utils/activity');
 const { touchOpenSession, ensureOpenSession, newShiftId, numbersFrom } = require('../services/shiftService');
 const { deliveryState, deliveryStateFilter, DELIVERY_BASE } = require('../utils/deliveryState');
+const loyalty = require('../services/loyaltyService');
+const { hasPermission } = require('../middlewares/permission');
 
 /** حدث في تسلسل الطلب (للتتبع وسجل التوصيل) — آخر 40 حدثاً فقط. */
 const timelinePush = (event, user) => ({
@@ -507,6 +509,9 @@ const updateOrderStatus = async (req, res) => {
     console.error('realtime emit failed:', e.message);
   }
 
+  // الولاء: «تم التسليم» يمنح نقاط الفاتورة المدفوعة، والإلغاء يعكسها — بلا انتظار ولا أثر على الرد
+  loyalty.onOrderStatusChanged(order, previousStatus, req.user).catch((e) => console.error('loyalty status hook:', e.message));
+
   res.json(order);
 };
 
@@ -840,6 +845,32 @@ const createPosOrder = async (req, res) => {
       });
     }
 
+    /* ═══ الولاء (اختياري — بيع بلا loyalty يبقى كما كان تماماً) ═══
+       العضوية بـ QR البطاقة أو رقم الهاتف، والمكافأة تُستبدل قبل إنشاء الفاتورة بشرط الرصيد،
+       بمعرّف البيع نفسه (clientRef): إعادة الإرسال لا تخصم مرتين. */
+    const L = req.body.loyalty && typeof req.body.loyalty === 'object' ? req.body.loyalty : null;
+    let member = null; let discount = 0; let redeemed = null;
+    const saleRef = clientRef || `pos-${crypto.randomUUID()}`;
+    if (L && (L.code || L.phone)) {
+      if (!hasPermission(req.user, 'loyalty:use') && !hasPermission(req.user, 'loyalty:manage')) {
+        return res.status(403).json({ success: false, message: 'لا تملك صلاحية استخدام نظام الولاء' });
+      }
+      member = L.code ? await loyalty.findByCode(L.code) : await loyalty.findByPhone(L.phone);
+      if (!member && L.phone && L.enroll) member = await loyalty.ensureAccount({ phone: L.phone, name: L.name });
+      if (!member) return res.status(404).json({ success: false, message: 'لا توجد عضوية ولاء بهذا الرمز أو الرقم' });
+      if (member.status !== 'active') return res.status(403).json({ success: false, message: 'عضوية الولاء موقوفة' });
+      if (L.rewardId) {
+        if (!mongoose.Types.ObjectId.isValid(L.rewardId)) return res.status(400).json({ success: false, message: 'مكافأة غير صالحة' });
+        try {
+          const priced = finalItems.map((i) => ({ ...i, basePrice: Number((byId.get(String(i.product)) || {}).price || 0) }));
+          redeemed = await loyalty.redeemForSale({ account: member, rewardId: L.rewardId, items: priced, itemsTotal, saleRef, user: req.user });
+          discount = redeemed.discount;
+        } catch (e) {
+          return res.status(e.status || 400).json({ success: false, code: e.code, message: e.message });
+        }
+      }
+    }
+
     // ✅ اسم طابعة القسم يُحسم من سلسلة التوجيه: التصنيف ← طابعته ← الرئيسية
     try {
       const groups = await printerService.groupOrderItemsByPrinter(finalItems);
@@ -851,34 +882,66 @@ const createPosOrder = async (req, res) => {
       console.warn('تعذّر تحديد طابعات الأقسام:', e.message);
     }
 
-    const total = itemsTotal;
-    const orderNumber = await generateUniqueOrderNumber();
+    const total = Math.round((itemsTotal - discount) * 1000) / 1000;
+    let order;
+    let orderNumber;
+    try {
+      orderNumber = await generateUniqueOrderNumber();
 
-    const order = await Order.create({
-      orderNumber,
-      customerName: 'سفري',
-      phone: '',
-      address: '',
-      items: finalItems,
-      itemsTotal,
-      deliveryFee: 0,
-      total,
-      paymentMethod: ['cash', 'cliq', 'card'].includes(paymentMethod) ? paymentMethod : 'cash',
-      orderType: 'pickup',
-      notes: String(notes || ''),
-      brand: brand || 'diyar',
-      source: 'pos',
-      status: 'preparing',   // مؤكَّد فوراً — البيع تمّ على الكاشير
-      confirmedAt: new Date(),
-      printRequested: !!printRequested,
-      posChannel: channel,
-      clientRef,
-      offlineNumber,
-      offlineSoldAt,
-      // البائع يملك الطلب: يدخل في جرده هو
-      handledBy: req.user ? req.user._id : null,
-      handledByName: handlerName(req.user),
-    });
+      order = await Order.create({
+        orderNumber,
+        customerName: 'سفري',
+        phone: '',
+        address: '',
+        items: finalItems,
+        itemsTotal,
+        deliveryFee: 0,
+        total,
+        paymentMethod: ['cash', 'cliq', 'card'].includes(paymentMethod) ? paymentMethod : 'cash',
+        orderType: 'pickup',
+        notes: String(notes || ''),
+        brand: brand || 'diyar',
+        source: 'pos',
+        status: 'preparing',   // مؤكَّد فوراً — البيع تمّ على الكاشير
+        confirmedAt: new Date(),
+        printRequested: !!printRequested,
+        posChannel: channel,
+        clientRef,
+        offlineNumber,
+        offlineSoldAt,
+        // البائع يملك الطلب: يدخل في جرده هو
+        handledBy: req.user ? req.user._id : null,
+        handledByName: handlerName(req.user),
+        ...(member ? {
+          discount,
+          loyalty: {
+            account: member._id, memberNo: member.memberNo,
+            rewardId: redeemed ? redeemed.reward._id : null, rewardName: redeemed ? redeemed.reward.name : '',
+            pointsRedeemed: redeemed ? -redeemed.tx.points : 0, pointsEarned: 0,
+          },
+        } : {}),
+      });
+    } catch (e) {
+      // لم تُنشأ الفاتورة: تُرجع النقاط المستبدلة فوراً
+      if (redeemed) await loyalty.undoRedeem(saleRef, req.user).catch((x) => console.error('loyalty undo:', x.message));
+      throw e;
+    }
+
+    // الولاء بعد الفاتورة: ربط الاستبدال بها، ومنح نقاطها (البيع مدفوع) — فشله لا يمس البيع
+    let loyaltyOut;
+    if (member) {
+      try {
+        if (redeemed) await loyalty.attachRedeemToOrder(saleRef, order);
+        const earned = await loyalty.earnForOrder(order, { user: req.user, account: member });
+        if (earned) order.loyalty.pointsEarned = earned.points;
+        const fresh = await require('../models/LoyaltyAccount').findById(member._id).lean();
+        loyaltyOut = { memberNo: member.memberNo, name: member.name, pointsEarned: earned ? earned.points : 0,
+          pointsRedeemed: redeemed ? -redeemed.tx.points : 0, discount, balance: fresh ? fresh.balance : null };
+      } catch (e) {
+        console.error('loyalty after sale:', e.message);
+        loyaltyOut = { memberNo: member.memberNo, error: 'تم البيع، لكن تعذّر تحديث نقاط الولاء الآن — تُراجع من لوحة الولاء' };
+      }
+    }
 
     if (offlineNumber) console.log(`📴 مزامنة بيع بلا إنترنت ${offlineNumber} → ${orderNumber}`);
     logActivity({ req, order, action: 'pos.sale', after: order.status, details: offlineNumber ? { offlineNumber } : undefined });
@@ -887,7 +950,7 @@ const createPosOrder = async (req, res) => {
 
     try { realtime.emitOrderCreated(order); } catch (e) { console.error('realtime emit failed:', e.message); }
 
-    res.status(201).json({ success: true, order });
+    res.status(201).json({ success: true, order, ...(loyaltyOut ? { loyalty: loyaltyOut } : {}) });
   } catch (err) {
     console.error('createPosOrder error:', err);
     res.status(500).json({ success: false, message: 'تعذر إنشاء طلب البيع المباشر', error: err.message });

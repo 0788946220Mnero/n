@@ -121,6 +121,20 @@ const orderSchema = new mongoose.Schema(
     ],
     // رسائل الزبون وطلبات الإضافة (حقل اختياري — الطلبات القديمة تبقى صالحة)
     customerRequests: { type: [customerRequestSchema], default: undefined },
+    // ═══ الولاء (حقول اختيارية — الطلبات القديمة تبقى صالحة) ═══
+    // الخصم يظهر في فاتورة السفري (buildInvoiceHtml في لوحة التحكم)؛ total = itemsTotal − discount + deliveryFee
+    discount: { type: Number, default: 0 },
+    loyalty: {
+      type: new mongoose.Schema({
+        account: { type: mongoose.Schema.Types.ObjectId, ref: 'LoyaltyAccount' },
+        memberNo: String,
+        rewardId: { type: mongoose.Schema.Types.ObjectId, ref: 'LoyaltyReward', default: null },
+        rewardName: { type: String, default: '' },
+        pointsRedeemed: { type: Number, default: 0 },
+        pointsEarned: { type: Number, default: 0 },
+      }, { _id: false }),
+      default: undefined,
+    },
     printRequested: { type: Boolean, default: false },
     printed: { type: Boolean, default: false },
     printedAt: { type: Date, default: null },
