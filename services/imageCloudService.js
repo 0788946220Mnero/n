@@ -18,7 +18,7 @@ const relay = require('./imageRelayService');
  * نفق خادم ديار (/api/image-cloud/relay) — عبر اتصال الجهاز داخل هذا الخادم بلا خروج للإنترنت.
  */
 function cfgFetch(cfg, path, init = {}) {
-  if (relay.isRelayUrl(cfg.baseUrl)) { const { signal, ...rest } = init; return relay.relayFetch(path, rest); }
+  if (relay.isRelayUrl(cfg.baseUrl)) { const { signal, ...rest } = init; return relay.relayFetch(path, rest, cfg.keyNodeId); }
   return fetch(`${cfg.baseUrl}${path}`, init);
 }
 
@@ -39,8 +39,9 @@ async function getDoc({ withKey = false } = {}) {
 async function activeConfig() {
   if (cache && Date.now() - cacheAt < TTL_MS) return cache.enabled ? cache : null;
   const d = await getDoc({ withKey: true });
-  cache = d ? { enabled: !!d.enabled, baseUrl: trimUrl(d.baseUrl), apiKey: d.apiKey || '', projectId: d.projectId || '' } : { enabled: false };
+  cache = d ? { enabled: !!d.enabled, baseUrl: trimUrl(d.baseUrl), apiKey: d.apiKey || '', projectId: d.projectId || '', keyNodeId: d.keyNodeId || '' } : { enabled: false };
   cacheAt = Date.now();
+  relay.setPreferred(cache.keyNodeId); // النفق يوجّه لصاحب المفتاح أولاً
   return cache.enabled && cache.baseUrl && cache.apiKey ? cache : null;
 }
 function invalidate() { cache = null; cacheAt = 0; }

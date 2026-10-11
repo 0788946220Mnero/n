@@ -189,3 +189,55 @@ test('جهاز لا يرد: مهلة ثم يُجرَّب جهاز آخر متص�
   assert.ok(Date.now() - t0 < 2000);
   silent.ws.close();
 });
+
+test('جهازان على شبكتين: المفتاح المحفوظ لجهاز غير متصل ← الخادم يطلب مفتاح الكاشير المتصل فتُفعَّل', async () => {
+  relay.reset();
+  // الوضع الحقيقي: مفتاح من جهاز آخر (لا يتزامن مع الكاشير)، والسحابة غير مفعّلة
+  DOC = { key: 'main', enabled: false, wantEnabled: true, apiKey: 'isk_otherdevicekey1', keyNodeId: '', projectId: 'diyar',
+    baseUrl: `${base}/api/image-cloud/relay`,
+    nodes: [
+      { nodeId: 'pos-relay-1', name: 'CASHIER', proofHash: sha('SECRET-R'), lastSeen: new Date().toISOString() },
+      { nodeId: 'pos-home-9', name: 'HOME', proofHash: sha('SECRET-H'), lastSeen: new Date().toISOString() },
+    ] };
+  imageCloud.invalidate();
+  dev = await device('pos-relay-1', 'SECRET-R');
+  const hb = async (nodeId, proof) => (await fetch(base + '/api/image-cloud/nodes/heartbeat', {
+    method: 'POST', headers: { Authorization: 'Bearer CASHIER', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ nodeId, running: true, proof }),
+  })).json();
+  let r = await hb('pos-relay-1', 'SECRET-R');
+  assert.equal(r.needKey, true, 'الخادم يطلب مفتاح الكاشير');
+  for (let i = 0; i < 40 && !DOC.lastError; i++) await wait(25);
+  assert.equal(DOC.enabled, false);
+  assert.match(DOC.lastError || '', /مرفوض/, 'المفتاح القديم مرفوض على الكاشير — هذا سبب «السحابة لا تعمل»');
+  // بلا سرّ صحيح لا يُقبل مفتاح
+  const post = (body) => fetch(base + '/api/image-cloud/nodes/key', { method: 'POST', headers: { Authorization: 'Bearer CASHIER', 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  assert.equal((await post({ nodeId: 'pos-relay-1', proof: 'WRONG', apiKey: 'isk_relaytestkey123' })).status, 403);
+  const k = await (await post({ nodeId: 'pos-relay-1', proof: 'SECRET-R', apiKey: 'isk_relaytestkey123' })).json();
+  assert.equal(k.enabled, true, k.message);
+  assert.equal(DOC.apiKey, 'isk_relaytestkey123');
+  assert.equal(DOC.keyNodeId, 'pos-relay-1');
+  r = await hb('pos-relay-1', 'SECRET-R');
+  assert.equal(r.needKey, false, 'بعد التفعيل لا طلب');
+  assert.equal((await post({ nodeId: 'pos-relay-1', proof: 'SECRET-R', apiKey: 'isk_relaytestkey123' })).status, 409);
+});
+
+test('النفق يوجّه لصاحب المفتاح أولاً حتى لو اتصل جهاز آخر بعده', async () => {
+  const home = await device('pos-home-9', 'SECRET-H', { onReq: (m, b, reply) => reply(401, {}, Buffer.from('{"error":{"message":"مفتاح خاطئ"}}')) });
+  assert.equal(home.ok, true);
+  imageCloud.invalidate();
+  const t = await imageCloud.test(await imageCloud.activeConfig());
+  assert.equal(t.ok, true, `الفحص ذهب للكاشير لا للجهاز الأحدث: ${t.message}`);
+  relay.clearCache();
+  const m = await get('/api/image-cloud/relay/media/01PREF/medium');
+  assert.equal(m.status, 200);
+  assert.equal(home.seen.length, 0, 'الجهاز الآخر لم يستلم أي طلب');
+  home.ws.close();
+});
+
+test('إزالة الجهاز صاحب المفتاح من اللوحة ← يُنسى صاحب المفتاح', async () => {
+  const r = await fetch(base + '/api/image-cloud/nodes/pos-relay-1', { method: 'DELETE', headers: { Authorization: 'Bearer ADMIN' } });
+  assert.equal(r.status, 200);
+  assert.ok(!DOC.keyNodeId, 'صاحب المفتاح نُسي');
+  assert.ok(!DOC.nodes.some((n) => n.nodeId === 'pos-relay-1'));
+});

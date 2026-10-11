@@ -14,6 +14,7 @@ const imageCloudSchema = new mongoose.Schema(
     baseUrl: { type: String, default: '', trim: true },   // الرابط العام (نفق Cloudflare مثلاً)
     projectId: { type: String, default: '', trim: true },
     apiKey: { type: String, default: '', select: false },
+    keyNodeId: { type: String, default: '' },             // الجهاز الذي أنشأ المفتاح — النفق يوجّه إليه أولاً
     nodeName: { type: String, default: '' },              // اسم الجهاز كما يعرّف نفسه
     linkedFrom: { type: String, default: '' },            // «DiyarPOS — اسم الجهاز» أو «لوحة التحكم»
     updatedByName: { type: String, default: '' },

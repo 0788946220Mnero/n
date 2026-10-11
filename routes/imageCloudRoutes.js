@@ -21,6 +21,7 @@ router.post('/nodes/join', protect, admin, c.nodeJoin);          // انضمام
 router.post('/nodes/heartbeat', protect, c.nodeHeartbeat);       // نبض جهاز منضم (أي مستخدم على الجهاز)
 router.post('/nodes/request', protect, c.nodeRequest);            // DiyarPOS يطلب الربط (أي حساب)
 router.post('/nodes/claim', protect, c.nodeClaim);                // الجهاز المُوافَق عليه يستلم (يثبت هويته بسرّه)
+router.post('/nodes/key', protect, c.nodeKey);                    // الجهاز يرسل مفتاحه حين يطلبه الخادم (بسرّه)
 router.post('/nodes/:nodeId/decide', protect, admin, c.nodeDecide); // موافقة/رفض المدير
 router.delete('/nodes/:nodeId', protect, admin, c.nodeRemove);
 router.get('/relay-status', protect, admin, c.relayStatus);       // الأجهزة المتصلة بالنفق والتخزين المؤقت

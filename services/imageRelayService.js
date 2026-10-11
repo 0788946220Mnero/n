@@ -36,6 +36,10 @@ const sameHash = (a, b) => typeof a === 'string' && typeof b === 'string' && a.l
 /** الأجهزة المتصلة الآن: nodeId ← { ws, since, name, pending: Map(id ← طلب) } */
 const nodes = new Map();
 let wss = null;
+/** الجهاز المفضّل (صاحب مفتاح الرفع وصوره): يُوجَّه إليه أولاً. undefined = لم يُقرأ بعد. */
+let preferred;
+const setPreferred = (id) => { preferred = id || null; };
+const isConnected = (id) => !!id && nodes.has(id);
 
 /* ═════════ اتصال الأجهزة ═════════ */
 
@@ -129,7 +133,8 @@ function finish(node, id, body) {
 
 /* ═════════ الطلبات عبر النفق ═════════ */
 
-const connected = () => [...nodes.values()].sort((a, b) => b.since - a.since);
+const connected = (prefer) => [...nodes.values()].sort((a, b) =>
+  (b.nodeId === prefer) - (a.nodeId === prefer) || b.since - a.since);
 const connectedCount = () => nodes.size;
 const status = () => connected().map((n) => ({ nodeId: n.nodeId, name: n.name, since: new Date(n.since), pending: n.pending.size }));
 
@@ -155,8 +160,13 @@ function sendTo(node, method, path, headers, body, timeoutMs) {
  * طلب على خدمة الصور عبر النفق. يرجع { status, headers, body: Buffer }.
  * بلا جهاز متصل ← خطأ status 0 (فيرجع الرفع لـ Cloudinary كالعادة).
  */
-async function request(method, path, { headers = {}, body = null, timeoutMs = REQ_TIMEOUT_MS } = {}) {
-  const list = connected();
+async function request(method, path, { headers = {}, body = null, timeoutMs = REQ_TIMEOUT_MS, prefer } = {}) {
+  if (preferred === undefined) {
+    // أول طلب بعد تشغيل الخادم: نعرف صاحب المفتاح من الإعدادات
+    try { await require('./imageCloudService').activeConfig(); } catch (_) { /* */ }
+    if (preferred === undefined) preferred = null;
+  }
+  const list = connected(prefer || preferred);
   if (!list.length) throw Object.assign(new Error('لا يوجد جهاز صور متصل بالخادم — DiyarPOS مطفأ أو بلا إنترنت'), { status: 0 });
   let last;
   for (const node of list.slice(0, 2)) { // جهاز ثانٍ عند فشل الأول
@@ -166,7 +176,7 @@ async function request(method, path, { headers = {}, body = null, timeoutMs = RE
 }
 
 /** كـ fetch تماماً (Response حقيقي) — ليستعمله imageCloudService بلا تغيير في منطقه. */
-async function relayFetch(path, init = {}) {
+async function relayFetch(path, init = {}, prefer) {
   const headers = {};
   new Headers(init.headers || {}).forEach((v, k) => { headers[k] = v; });
   let body = null;
@@ -177,7 +187,7 @@ async function relayFetch(path, init = {}) {
     const ct = r.headers.get('content-type');
     if (ct) headers['content-type'] = ct;
   }
-  const r = await request(init.method || 'GET', path, { headers, body });
+  const r = await request(init.method || 'GET', path, { headers, body, prefer });
   return new Response(r.status === 204 || r.status === 304 ? null : r.body, { status: r.status, headers: r.headers });
 }
 
@@ -258,5 +268,5 @@ function reset() { for (const n of nodes.values()) { try { n.ws.terminate(); } c
 
 module.exports = {
   WS_PATH, MOUNT, init, handleUpgrade, request, relayFetch, serveMedia, baseFor, isRelayUrl,
-  connectedCount, status, clearCache, cacheStats, reset,
+  connectedCount, status, clearCache, cacheStats, reset, setPreferred, isConnected,
 };

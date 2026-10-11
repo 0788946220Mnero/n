@@ -180,6 +180,13 @@ async function claim(body) {
   return { ...out, approvedBy: r.approvedBy, request: r };
 }
 
+/** الجهاز المنضم الذي أثبت هويته بسرّه — أو null. */
+async function proven(nodeId, proof) {
+  const d = await doc();
+  const n = d.nodes.find((x) => x.nodeId === String(nodeId || ''));
+  return n && proof && sameHash(sha(proof), n.proofHash) ? n : null;
+}
+
 /** الطلبات للعرض في اللوحة (المنتظرة والمرفوضة). */
 const requestsView = (requests) => (requests || []).filter((r) => r.status !== 'approved').map((r) => ({
   nodeId: r.nodeId, name: r.name, machine: r.machine, requestedBy: r.requestedBy, requestedAt: r.requestedAt,
@@ -203,4 +210,4 @@ function view(nodes) {
   }));
 }
 
-module.exports = { join, heartbeat, remove, view, issueOf, peersFor, request, decide, claim, requestsView, sha, ID_RX };
+module.exports = { join, heartbeat, remove, view, issueOf, peersFor, request, decide, claim, requestsView, proven, sha, ID_RX };
