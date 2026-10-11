@@ -11,6 +11,16 @@
 */
 const crypto = require('crypto');
 const ImageCloud = require('../models/ImageCloud');
+const relay = require('./imageRelayService');
+
+/**
+ * الطلب لخدمة الصور: مباشرة على الرابط العام (نفق Cloudflare مثلاً)، أو — إن كان الرابط
+ * نفق خادم ديار (/api/image-cloud/relay) — عبر اتصال الجهاز داخل هذا الخادم بلا خروج للإنترنت.
+ */
+function cfgFetch(cfg, path, init = {}) {
+  if (relay.isRelayUrl(cfg.baseUrl)) { const { signal, ...rest } = init; return relay.relayFetch(path, rest); }
+  return fetch(`${cfg.baseUrl}${path}`, init);
+}
 
 const TTL_MS = 15000;
 const UPLOAD_TIMEOUT_MS = Number(process.env.IMAGE_CLOUD_TIMEOUT_MS || 30000);
@@ -58,7 +68,7 @@ async function upload(buffer, opts = {}) {
   const sha = crypto.createHash('sha256').update(buffer).digest('hex');
   let res;
   try {
-    res = await fetch(`${cfg.baseUrl}/api/v1/images`, {
+    res = await cfgFetch(cfg, '/api/v1/images', {
       method: 'POST',
       headers: { 'X-Api-Key': cfg.apiKey, 'X-Content-SHA256': sha },
       body: form,
@@ -76,7 +86,7 @@ async function remove(id, cfgIn) {
   const cfg = cfgIn || await activeConfig();
   if (!cfg || !id) return false;
   try {
-    const res = await fetch(`${cfg.baseUrl}/api/v1/images/${encodeURIComponent(id)}`, { method: 'DELETE', headers: { 'X-Api-Key': cfg.apiKey }, signal: AbortSignal.timeout(10000) });
+    const res = await cfgFetch(cfg, `/api/v1/images/${encodeURIComponent(id)}`, { method: 'DELETE', headers: { 'X-Api-Key': cfg.apiKey }, signal: AbortSignal.timeout(10000) });
     return res.ok;
   } catch (_) { return false; }
 }
@@ -92,15 +102,16 @@ async function test(cfgIn) {
   if (!/^https?:\/\//i.test(cfg.baseUrl)) return { ok: false, message: 'الرابط يجب أن يبدأ بـ https://' };
   let health;
   try {
-    const r = await fetch(`${cfg.baseUrl}/api/v1/health`, { signal: AbortSignal.timeout(8000) });
+    const r = await cfgFetch(cfg, '/api/v1/health', { signal: AbortSignal.timeout(8000) });
     health = await r.json().catch(() => ({}));
     if (!r.ok) return { ok: false, message: `الخدمة ردّت بـ ${r.status}`, ms: Date.now() - t0 };
   } catch (err) {
+    if (relay.isRelayUrl(cfg.baseUrl)) return { ok: false, message: `${err.message}`, ms: Date.now() - t0 };
     return { ok: false, message: `جهاز الصور لا يرد على ${cfg.baseUrl} — تأكد أن DiyarPOS يعمل والنفق متصل`, ms: Date.now() - t0 };
   }
   if (!cfg.apiKey) return { ok: false, node: health.node, message: 'الخدمة تعمل لكن المفتاح غير مضبوط', ms: Date.now() - t0 };
   try {
-    const r = await fetch(`${cfg.baseUrl}/api/v1/images?page=1&pageSize=1`, { headers: { 'X-Api-Key': cfg.apiKey }, signal: AbortSignal.timeout(8000) });
+    const r = await cfgFetch(cfg, '/api/v1/images?page=1&pageSize=1', { headers: { 'X-Api-Key': cfg.apiKey }, signal: AbortSignal.timeout(8000) });
     if (!r.ok) { const e = await errorOf(r); return { ok: false, node: health.node, message: `المفتاح مرفوض: ${e.message}`, ms: Date.now() - t0 }; }
   } catch (err) {
     return { ok: false, node: health.node, message: 'تعذّر التحقق من المفتاح', ms: Date.now() - t0 };

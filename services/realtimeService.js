@@ -106,8 +106,20 @@ const acceptTracker = async (socket, trackParam) => {
 };
 
 /** تهيئة الخادم — يُستدعى من server.js بعد إنشاء خادم HTTP. */
+const upgradeRoutes = new Map(); // مسارات WebSocket أخرى على نفس الخادم (نفق الصور)
+/** تسجيل مسار WebSocket إضافي (مكتبة ws ترفض كل مسار غير مسارها إن رُبطت بالخادم مباشرة). */
+const onUpgrade = (path, handler) => upgradeRoutes.set(path, handler);
+
 const init = (server) => {
-  wss = new WebSocketServer({ server, path: '/ws' });
+  wss = new WebSocketServer({ noServer: true });
+  server.on('upgrade', (req, socket, head) => {
+    const path = String(req.url || '').split('?')[0];
+    if (path === '/ws') return wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
+    const h = upgradeRoutes.get(path);
+    if (h) return h(req, socket, head);
+    socket.write('HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n');
+    return socket.destroy();
+  });
 
   wss.on('connection', async (socket, req) => {
     // ── المصادقة: JWT إلزامي ──
@@ -296,6 +308,7 @@ const emitShiftClosed = (shiftId, scope) => broadcast('shift.closed', { shiftId,
 
 module.exports = {
   init,
+  onUpgrade,
   broadcast,
   emitShiftClosed,
   emitOrderCreated,

@@ -133,6 +133,9 @@ const server = http.createServer(app);
 // خدمة الوقت الحقيقي — تشارك نفس منفذ الخادم
 const realtime = require('./services/realtimeService');
 realtime.init(server);
+// نفق الصور: أجهزة DiyarPOS تتصل بنفسها هنا وتُعرض صورها عبر هذا الخادم (بلا Cloudflare)
+const imageRelay = require('./services/imageRelayService');
+realtime.onUpgrade(imageRelay.WS_PATH, imageRelay.handleUpgrade);
 
 server.listen(PORT, () => {
   console.log(`🚀 الخادم يعمل على المنفذ ${PORT}`);

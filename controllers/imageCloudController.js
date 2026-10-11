@@ -16,6 +16,7 @@ const imageCloud = require('../services/imageCloudService');
 const migration = require('../services/imageMigrationService');
 const nodesSvc = require('../services/imageCloudNodes');
 const realtime = require('../services/realtimeService');
+const relay = require('../services/imageRelayService');
 const { hasPermission } = require('../middlewares/permission');
 
 const nameOf = (u) => (u && (u.name || u.username)) || '';
@@ -41,11 +42,13 @@ async function view() {
   return {
     enabled: !!d.enabled, wantEnabled: !d.enabled && !!d.wantEnabled, baseUrl: d.baseUrl || '', projectId: d.projectId || '',
     hasKey: !!d.apiKey, keyHint: d.apiKey ? `…${String(d.apiKey).slice(-4)}` : '',
-    nodeName: d.nodeName || '', linkedFrom: d.linkedFrom || '', updatedByName: d.updatedByName || '', updatedAt: d.updatedAt,
+    nodeName: ((d.nodes || []).find((n) => n.nodeId === d.nodeName) || {}).name || d.nodeName || '', linkedFrom: d.linkedFrom || '', updatedByName: d.updatedByName || '', updatedAt: d.updatedAt,
     lastOkAt: d.lastOkAt, lastError: d.lastError || '', lastErrorAt: d.lastErrorAt,
     uploads: d.uploads || 0, fallbacks: d.fallbacks || 0,
     syncReady: !!d.syncSecret || (d.nodes || []).length > 0,
     hasTunnel: !!d.tunnelToken,
+    viaRelay: relay.isRelayUrl(d.baseUrl),
+    relayDevices: relay.status(),
     nodes: nodesSvc.view(d.nodes || []),
     requests: nodesSvc.requestsView(d.requests),
     migration: await migration.status(),
@@ -63,6 +66,8 @@ const update = async (req, res) => {
     projectId: b.projectId != null ? String(b.projectId).trim().slice(0, 64) : (cur && cur.projectId) || '',
     apiKey: typeof b.apiKey === 'string' && b.apiKey.trim() ? b.apiKey.trim() : (cur && cur.apiKey) || '',
   };
+  // بلا رابط خاص: الصور تمر عبر نفق خادم ديار (لا Cloudflare ولا إعداد)
+  if (next.enabled && !next.baseUrl) next.baseUrl = relay.baseFor(req);
   if (next.baseUrl && !/^https?:\/\/[^\s/]+/i.test(next.baseUrl)) return res.status(400).json({ success: false, message: 'الرابط غير صالح — مثال: https://images.diyaralanbat.com' });
   if (next.apiKey && !KEY_RX.test(next.apiKey)) return res.status(400).json({ success: false, message: 'صيغة المفتاح غير صحيحة (يبدأ بـ isk_)' });
   let pending = '';
@@ -95,9 +100,17 @@ const update = async (req, res) => {
  * تفعيل تلقائي: المدير يريدها مفعّلة (أو وافق على أول جهاز) والجهاز لم يكن يرد على الرابط العام.
  * مع كل نبض (بفاصل 20 ثانية على الأقل) نختبر؛ عند أول رد تُفعَّل ويُبلَّغ المدير. لا يؤخر رد النبض.
  */
-async function tryAutoEnable() {
-  const cur = await ImageCloud.findOne({ key: 'main' }).select('+apiKey').lean();
-  if (!cur || cur.enabled || !cur.wantEnabled || !cur.baseUrl || !cur.apiKey) return;
+async function tryAutoEnable(req) {
+  let cur = await ImageCloud.findOne({ key: 'main' }).select('+apiKey').lean();
+  if (!cur || cur.enabled || !cur.wantEnabled || !cur.apiKey) return;
+  // لا رابط خاص وجهاز متصل بالنفق ← الصور تمر عبر هذا الخادم
+  if (!cur.baseUrl && relay.connectedCount() > 0 && req) {
+    const base = relay.baseFor(req);
+    if (!base) return;
+    await ImageCloud.updateOne({ key: 'main' }, { $set: { baseUrl: base } });
+    cur = { ...cur, baseUrl: base };
+  }
+  if (!cur.baseUrl) return;
   if (cur.lastAutoTry && Date.now() - new Date(cur.lastAutoTry).getTime() < 20000) return;
   await ImageCloud.updateOne({ key: 'main' }, { $set: { lastAutoTry: new Date() } });
   const t = await imageCloud.test(cur);
@@ -141,8 +154,13 @@ const nodeJoin = async (req, res) => {
 
 /** نبض جهاز منضم (أي مستخدم مسجّل على الجهاز): حالته ← الأجهزة الأخرى. */
 const nodeHeartbeat = async (req, res) => {
-  try { res.json({ success: true, ...(await nodesSvc.heartbeat(req.body || {}, realtime.broadcast)) }); } catch (err) { return fail(res, err); }
-  tryAutoEnable().catch((e) => console.error('imagecloud auto-enable:', e.message));
+  try {
+    const out = await nodesSvc.heartbeat(req.body || {}, realtime.broadcast);
+    if (out.config) out.config.relayUrl = relayWs(req); // جهاز أثبت هويته: عنوان النفق
+    out.relayConnected = relay.status().some((n) => n.nodeId === String((req.body || {}).nodeId || ''));
+    res.json({ success: true, ...out });
+  } catch (err) { return fail(res, err); }
+  tryAutoEnable(req).catch((e) => console.error('imagecloud auto-enable:', e.message));
 };
 
 const nodeRemove = async (req, res) => {
@@ -192,7 +210,8 @@ const nodeClaim = async (req, res) => {
   const $set = { linkedFrom: `DiyarPOS — ${who}`, updatedByName: out.approvedBy || '' };
   // مفتاح السحابة العاملة يبقى (المفاتيح تتزامن بين الأجهزة)؛ يُستبدل فقط إن لم تكن مفعّلة
   if (apiKey && (!cur.apiKey || !cur.enabled)) $set.apiKey = apiKey;
-  const baseUrl = cur.baseUrl || imageCloud.trimUrl(b.publicUrl || '');
+  // بلا رابط عام خاص (Cloudflare…): الصور تمر عبر نفق هذا الخادم تلقائياً
+  const baseUrl = cur.baseUrl || imageCloud.trimUrl(b.publicUrl || '') || relay.baseFor(req);
   if (!cur.baseUrl && baseUrl) $set.baseUrl = baseUrl;
   if (!cur.projectId) $set.projectId = String(b.projectId || 'diyar').slice(0, 64);
 
@@ -207,7 +226,9 @@ const nodeClaim = async (req, res) => {
       link = { enabled: true, message: 'فُعّلت سحابة الصور — الصور الجديدة تُرفع إليها الآن' };
     } else {
       Object.assign($set, { lastError: t.message, lastErrorAt: new Date() });
-      link = { enabled: false, message: `انضم الجهاز، لكن الخادم لا يصل للرابط العام بعد — تُفعَّل تلقائياً حين يرد: ${t.message}` };
+      link = relay.isRelayUrl(baseUrl)
+        ? { enabled: false, message: 'انضم الجهاز — الصور تمر عبر خادم ديار، وتُفعَّل السحابة تلقائياً حين يتصل النفق (خلال دقيقة)' }
+        : { enabled: false, message: `انضم الجهاز، لكن الخادم لا يصل للرابط العام بعد — تُفعَّل تلقائياً حين يرد: ${t.message}` };
     }
   }
   // أول جهاز: يُفعَّل تلقائياً حين يصل الخادم للرابط العام (بعد ضبط النفق من الهاتف)
@@ -216,7 +237,12 @@ const nodeClaim = async (req, res) => {
   imageCloud.invalidate();
   realtime.broadcast('imagecloud.alert', { level: link.enabled ? 'ok' : 'warn', nodeId: out.nodeId, message: `☁ جهاز ${who}: ${link.message}` });
   delete out.request;
-  res.json({ success: true, ...out, link });
+  res.json({ success: true, ...out, link, relayUrl: relayWs(req) });
 };
 
-module.exports = wrapAll({ get, update, test, migrateStatus, migrateStart, nodeJoin, nodeHeartbeat, nodeRemove, nodeRequest, nodeDecide, nodeClaim });
+/** عنوان اتصال الأجهزة بالنفق: wss://{هذا الخادم}/api/image-cloud/relay/ws */
+const relayWs = (req) => relay.baseFor(req).replace(/^http/, 'ws') + '/ws';
+
+const relayStatus = async (req, res) => res.json({ success: true, devices: relay.status(), cache: relay.cacheStats() });
+
+module.exports = wrapAll({ get, update, test, migrateStatus, migrateStart, nodeJoin, nodeHeartbeat, nodeRemove, nodeRequest, nodeDecide, nodeClaim, relayStatus });
