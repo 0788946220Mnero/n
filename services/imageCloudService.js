@@ -44,6 +44,13 @@ async function activeConfig() {
   relay.setPreferred(cache.keyNodeId); // النفق يوجّه لصاحب المفتاح أولاً
   return cache.enabled && cache.baseUrl && cache.apiKey ? cache : null;
 }
+/** مفعّلة لكن ناقصة (بلا مفتاح/رابط) — السبب ليُسجَّل بدل الرجوع الصامت لـ Cloudinary. */
+function inactiveReason() {
+  if (!cache || !cache.enabled) return '';
+  if (!cache.apiKey) return 'لا يوجد مفتاح رفع — بانتظار أن يرسله جهاز الكاشير المتصل';
+  if (!cache.baseUrl) return 'لم يُضبط رابط سحابة الصور';
+  return '';
+}
 function invalidate() { cache = null; cacheAt = 0; }
 
 const mediaUrl = (base, id, variant = 'large') => `${trimUrl(base)}/media/${encodeURIComponent(id)}/${variant}`;
@@ -78,7 +85,15 @@ async function upload(buffer, opts = {}) {
   } catch (err) {
     const e = new Error(`جهاز الصور لا يرد: ${err.cause && err.cause.code ? err.cause.code : err.message}`); e.status = 0; throw e;
   }
-  if (!res.ok) throw await errorOf(res);
+  if (!res.ok) {
+    const e = await errorOf(res);
+    // الجهاز رفض المفتاح (مفتاح جهاز آخر، أو أُبطل) ← نطلب مفتاحاً من الجهاز المتصل مع نبضه التالي
+    if (res.status === 401 || res.status === 403) {
+      e.message = `جهاز الصور رفض مفتاح الرفع (${e.message}) — يُطلب مفتاح جديد من جهاز الكاشير تلقائياً`;
+      ImageCloud.updateOne({ key: 'main' }, { $set: { keyRejectedAt: new Date() } }).catch(() => {});
+    }
+    throw e;
+  }
   const body = await res.json();
   return { id: body.id, url: mediaUrl(cfg.baseUrl, body.id, opts.variant || 'large'), variants: body.variants || {} };
 }
@@ -141,4 +156,4 @@ function folderFor(req) {
   return p.split(/[/?]/)[0] || 'misc';
 }
 
-module.exports = { activeConfig, invalidate, upload, remove, test, note, mediaUrl, getDoc, variantFor, folderFor, trimUrl };
+module.exports = { activeConfig, invalidate, upload, remove, test, note, mediaUrl, getDoc, variantFor, folderFor, trimUrl, inactiveReason };

@@ -82,7 +82,12 @@ class HybridStorage {
   _handleFile(req, file, cb) {
     if (isVideoFile(file)) return this.fallback._handleFile(req, file, cb);
     imageCloud.activeConfig().catch(() => null).then((cfg) => {
-      if (!cfg) return this.fallback._handleFile(req, file, cb);
+      if (!cfg) {
+        // مفعّلة لكن ناقصة: يُسجَّل السبب (يظهر في بطاقة السحابة) بدل الرجوع الصامت
+        const why = imageCloud.inactiveReason();
+        if (why) imageCloud.note(false, why, { fallback: true });
+        return this.fallback._handleFile(req, file, cb);
+      }
       const chunks = [];
       file.stream.on('data', (c) => chunks.push(c));
       file.stream.on('error', cb);

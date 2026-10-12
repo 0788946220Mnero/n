@@ -160,7 +160,7 @@ function sendTo(node, method, path, headers, body, timeoutMs) {
  * طلب على خدمة الصور عبر النفق. يرجع { status, headers, body: Buffer }.
  * بلا جهاز متصل ← خطأ status 0 (فيرجع الرفع لـ Cloudinary كالعادة).
  */
-async function request(method, path, { headers = {}, body = null, timeoutMs = REQ_TIMEOUT_MS, prefer } = {}) {
+async function request(method, path, { headers = {}, body = null, timeoutMs = REQ_TIMEOUT_MS, prefer, tryAllOn404 = false } = {}) {
   if (preferred === undefined) {
     // أول طلب بعد تشغيل الخادم: نعرف صاحب المفتاح من الإعدادات
     try { await require('./imageCloudService').activeConfig(); } catch (_) { /* */ }
@@ -168,10 +168,16 @@ async function request(method, path, { headers = {}, body = null, timeoutMs = RE
   }
   const list = connected(prefer || preferred);
   if (!list.length) throw Object.assign(new Error('لا يوجد جهاز صور متصل بالخادم — DiyarPOS مطفأ أو بلا إنترنت'), { status: 0 });
-  let last;
-  for (const node of list.slice(0, 2)) { // جهاز ثانٍ عند فشل الأول
-    try { return await sendTo(node, method, path, headers, body, timeoutMs); } catch (err) { last = err; }
+  let last; let notFound = null;
+  // جهاز ثانٍ عند فشل الأول. وللعرض: صورة غير موجودة على جهاز (شبكتان لا تتزامنان) ← تُطلب من الأجهزة الأخرى
+  for (const node of list.slice(0, tryAllOn404 ? list.length : 2)) {
+    try {
+      const out = await sendTo(node, method, path, headers, body, timeoutMs);
+      if (tryAllOn404 && out.status === 404) { notFound = notFound || out; continue; }
+      return out;
+    } catch (err) { last = err; }
   }
+  if (notFound) return notFound;
   throw last;
 }
 
@@ -230,7 +236,7 @@ async function serveMedia(req, res) {
   const fromCache = !!r;
   if (!r) {
     try {
-      const out = await request('GET', path + qs, { headers: cacheable ? { accept: fwd.accept || '*/*' } : fwd });
+      const out = await request('GET', path + qs, { headers: cacheable ? { accept: fwd.accept || '*/*' } : fwd, tryAllOn404: true });
       r = { status: out.status, headers: out.headers, body: out.body, size: out.body.length, at: Date.now() };
       if (cacheable && out.status === 200) cachePut(key, r);
     } catch (err) {

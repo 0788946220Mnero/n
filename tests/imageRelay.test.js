@@ -267,3 +267,90 @@ test('رابط محلي محفوظ (127.0.0.1 من «ربط بالخادم» ب�
   assert.equal(j.cloud.viaRelay, true);
   assert.equal(j.cloud.enabled, true);
 });
+
+/* ───────── السحابة مفعّلة ثم تعطّلت: الإصلاح الذاتي كان يعمل قبل التفعيل فقط ───────── */
+const hbOf = async (nodeId, proof) => (await fetch(base + '/api/image-cloud/nodes/heartbeat', {
+  method: 'POST', headers: { Authorization: 'Bearer CASHIER', 'Content-Type': 'application/json' },
+  body: JSON.stringify({ nodeId, running: true, proof }),
+})).json();
+const sendKey = async (body) => (await fetch(base + '/api/image-cloud/nodes/key', { method: 'POST', headers: { Authorization: 'Bearer CASHIER', 'Content-Type': 'application/json' }, body: JSON.stringify(body) })).json();
+const twoNodes = () => [
+  { nodeId: 'pos-relay-1', name: 'CASHIER', proofHash: sha('SECRET-R'), lastSeen: new Date().toISOString() },
+  { nodeId: 'pos-home-9', name: 'HOME', proofHash: sha('SECRET-H'), lastSeen: new Date().toISOString() },
+];
+
+test('مفعّلة برابط محلي محفوظ والنفق متصل ← تتحول للنفق مع أول نبض', async () => {
+  relay.reset();
+  DOC = { key: 'main', enabled: true, apiKey: 'isk_relaytestkey123', keyNodeId: 'pos-relay-1', projectId: 'diyar',
+    baseUrl: 'http://127.0.0.1:5080', nodes: twoNodes() };
+  imageCloud.invalidate();
+  dev = await device('pos-relay-1', 'SECRET-R');
+  await hbOf('pos-relay-1', 'SECRET-R');
+  for (let i = 0; i < 40 && !/relay$/.test(DOC.baseUrl); i++) await wait(25);
+  assert.match(DOC.baseUrl, /\/api\/image-cloud\/relay$/);
+  assert.equal(DOC.enabled, true);
+  imageCloud.invalidate();
+  const up = await imageCloud.upload(IMG, { cfg: await imageCloud.activeConfig(), filename: 'p.jpg', mime: 'image/jpeg' });
+  assert.match(up.url, /\/api\/image-cloud\/relay\/media\/01RELAYUPLOAD\/large$/, 'الرفع يعمل عبر النفق');
+});
+
+test('مفعّلة ومفتاحها لجهاز غير متصل (شبكة أخرى) ← يُطلب مفتاح الكاشير المتصل، ويُقبل بعد اختباره فقط', async () => {
+  DOC = { ...DOC, enabled: true, apiKey: 'isk_otherdevicekey1', keyNodeId: 'pos-home-9', baseUrl: `${base}/api/image-cloud/relay`, lastError: '' };
+  imageCloud.invalidate();
+  const r = await hbOf('pos-relay-1', 'SECRET-R');
+  assert.equal(r.needKey, true, 'مفعّلة لكن صاحب المفتاح غائب ← يُطلب المفتاح');
+  // مفتاح لا يقبله جهاز الصور: لا يُستبدل به مفتاح السحابة
+  const bad = await sendKey({ nodeId: 'pos-relay-1', proof: 'SECRET-R', apiKey: 'isk_wrongkey000000' });
+  assert.equal(DOC.apiKey, 'isk_otherdevicekey1', 'مفتاح غير مُختبَر لا يُحفظ');
+  assert.match(DOC.lastError, /مرفوض/, bad.message);
+  const ok = await sendKey({ nodeId: 'pos-relay-1', proof: 'SECRET-R', apiKey: 'isk_relaytestkey123' });
+  assert.equal(ok.enabled, true, ok.message);
+  assert.equal(DOC.apiKey, 'isk_relaytestkey123'); assert.equal(DOC.keyNodeId, 'pos-relay-1'); assert.equal(DOC.enabled, true);
+  assert.ok(sent.some((m) => /الرفع الآن إلى جهاز CASHIER/.test(m.message || '')));
+  assert.equal((await hbOf('pos-relay-1', 'SECRET-R')).needKey, false, 'بعدها لا طلب');
+});
+
+test('جهاز الصور يرفض المفتاح عند الرفع ← يُسجَّل السبب ويُطلب مفتاح من الجهاز المتصل', async () => {
+  relay.reset();
+  dev = await device('pos-relay-1', 'SECRET-R', { onReq: (m, b, reply) => (m.method === 'POST'
+    ? reply(401, { 'content-type': 'application/json' }, Buffer.from('{"error":{"message":"مفتاح غير صالح"}}'))
+    : reply(200, { 'content-type': 'application/json' }, Buffer.from('{"status":"ok","node":"pos-relay-1","items":[]}'))) });
+  imageCloud.invalidate();
+  const e = await imageCloud.upload(IMG, { cfg: await imageCloud.activeConfig() }).catch((x) => x);
+  assert.equal(e.status, 401);
+  assert.match(e.message, /رفض مفتاح الرفع/);
+  for (let i = 0; i < 40 && !DOC.keyRejectedAt; i++) await wait(10);
+  assert.ok(DOC.keyRejectedAt, 'سُجّل الرفض');
+  assert.equal((await hbOf('pos-relay-1', 'SECRET-R')).needKey, true, 'يُطلب المفتاح ولو كان الجهاز صاحبه');
+  relay.reset();
+  dev = await device('pos-relay-1', 'SECRET-R');
+  const k = await sendKey({ nodeId: 'pos-relay-1', proof: 'SECRET-R', apiKey: 'isk_relaytestkey123' });
+  assert.equal(k.enabled, true);
+  assert.equal(DOC.keyRejectedAt, null, 'زال الرفض بعد مفتاح مُختبَر');
+});
+
+test('مفعّلة بلا مفتاح ← الرجوع لـ Cloudinary يُسجَّل بسببه لا بصمت', async () => {
+  DOC = { ...DOC, enabled: true, apiKey: '' };
+  imageCloud.invalidate();
+  assert.equal(await imageCloud.activeConfig(), null);
+  assert.match(imageCloud.inactiveReason(), /لا يوجد مفتاح رفع/);
+  DOC = { ...DOC, enabled: false };
+  imageCloud.invalidate(); await imageCloud.activeConfig();
+  assert.equal(imageCloud.inactiveReason(), '', 'غير مفعّلة ← لا خطأ يُسجَّل');
+});
+
+test('صورة على جهاز آخر (شبكتان لا تتزامنان) ← تُطلب من الأجهزة الأخرى بدل 404', async () => {
+  relay.reset();
+  DOC = { ...DOC, nodes: twoNodes(), keyNodeId: 'pos-relay-1' };
+  dev = await device('pos-relay-1', 'SECRET-R', { onReq: (m, b, reply) => reply(404, {}, null) });
+  const home = await device('pos-home-9', 'SECRET-H');
+  relay.setPreferred('pos-relay-1');
+  const r = await get('/api/image-cloud/relay/media/01ONHOME/medium');
+  assert.equal(r.status, 200, 'من جهاز البيت');
+  assert.ok(home.seen.some((m) => m.path === '/media/01ONHOME/medium'));
+  relay.clearCache();
+  home.ws.close();
+  for (let i = 0; i < 40 && relay.connectedCount() > 1; i++) await wait(25);
+  const nf = await get('/api/image-cloud/relay/media/01NOWHERE/medium');
+  assert.equal(nf.status, 404, 'غير موجودة في أي جهاز ← 404');
+});

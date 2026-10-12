@@ -109,7 +109,8 @@ const update = async (req, res) => {
  */
 async function tryAutoEnable(req, force = false) {
   let cur = await ImageCloud.findOne({ key: 'main' }).select('+apiKey').lean();
-  if (!cur || cur.enabled || !cur.wantEnabled || !cur.apiKey) return;
+  if (cur && cur.enabled) return repairEnabled(cur, req);
+  if (!cur || !cur.wantEnabled || !cur.apiKey) return;
   // لا رابط خاص (أو رابط محلي لا يُوصَل إليه) وجهاز متصل بالنفق ← الصور تمر عبر هذا الخادم
   if ((!cur.baseUrl || relay.isPrivateUrl(cur.baseUrl)) && relay.connectedCount() > 0 && req) {
     const base = relay.baseFor(req);
@@ -125,6 +126,19 @@ async function tryAutoEnable(req, force = false) {
   await ImageCloud.updateOne({ key: 'main' }, { $set: { enabled: true, nodeName: t.node || '', lastOkAt: new Date(), lastError: '' } });
   imageCloud.invalidate();
   realtime.broadcast('imagecloud.alert', { level: 'ok', message: `✓ فُعّلت سحابة الصور تلقائياً — جهاز ${t.node || 'الكاشير'} يرد على ${cur.baseUrl}` });
+}
+
+/**
+ * سحابة مفعّلة برابط محلي محفوظ (127.0.0.1 / 192.168.x — لا يصله الخادم أبداً) وجهاز متصل بالنفق
+ * ← تتحول للنفق فوراً. (الإصلاح الذاتي كان يعمل قبل التفعيل فقط.)
+ */
+async function repairEnabled(cur, req) {
+  if (!relay.isPrivateUrl(cur.baseUrl) || !relay.connectedCount() || !req) return;
+  const base = relay.baseFor(req);
+  if (!base) return;
+  await ImageCloud.updateOne({ key: 'main' }, { $set: { baseUrl: base, lastError: '' } });
+  imageCloud.invalidate();
+  realtime.broadcast('imagecloud.alert', { level: 'ok', message: '✓ سحابة الصور: الرابط المحلي استُبدل بنفق خادم ديار' });
 }
 
 const test = async (req, res) => {
@@ -260,8 +274,14 @@ const nodeClaim = async (req, res) => {
  */
 async function needsKeyFrom(nodeId) {
   const cur = await ImageCloud.findOne({ key: 'main' }).select('+apiKey').lean();
-  if (!cur || cur.enabled || !relay.isConnected(nodeId)) return false;
+  if (!cur || !relay.isConnected(nodeId)) return false;
+  // مفعّلة برابط عام خاص (Cloudflare): الرفع لا يمر بالنفق، فلا علاقة لمفتاح هذا الجهاز
+  const viaRelay = !cur.baseUrl || relay.isRelayUrl(cur.baseUrl) || relay.isPrivateUrl(cur.baseUrl);
+  if (cur.enabled && !viaRelay) return false;
   if (!cur.apiKey) return true;
+  // رفض جهاز الصور المفتاح مؤخراً (ساعة): يُطلب من الجهاز المتصل — ولو كان صاحبه (أُبطل وأُنشئ غيره)
+  if (cur.keyRejectedAt && Date.now() - new Date(cur.keyRejectedAt).getTime() < 3600000) return true;
+  // صاحب المفتاح غير متصل وهذا الجهاز متصل (شبكتان مختلفتان) — مفعّلة كانت أو لا
   return cur.keyNodeId !== nodeId && !relay.isConnected(cur.keyNodeId);
 }
 
@@ -273,7 +293,22 @@ const nodeKey = async (req, res) => {
   const apiKey = typeof b.apiKey === 'string' ? b.apiKey.trim() : '';
   if (!KEY_RX.test(apiKey)) return res.status(400).json({ success: false, message: 'صيغة المفتاح غير صحيحة' });
   if (!(await needsKeyFrom(node.nodeId))) return res.status(409).json({ success: false, message: 'لا حاجة لمفتاح من هذا الجهاز' });
-  await ImageCloud.updateOne({ key: 'main' }, { $set: { apiKey, keyNodeId: node.nodeId, wantEnabled: true, linkedFrom: `DiyarPOS — ${node.name || node.nodeId}` } });
+  const before = await ImageCloud.findOne({ key: 'main' }).lean();
+  if (before && before.enabled) {
+    // سحابة تعمل: لا يُستبدل مفتاحها إلا بمفتاح مُختبَر عبر النفق على هذا الجهاز
+    const baseUrl = relay.isPrivateUrl(before.baseUrl) || !before.baseUrl ? relay.baseFor(req) : before.baseUrl;
+    const t = await imageCloud.test({ baseUrl, apiKey, keyNodeId: node.nodeId });
+    if (!t.ok) {
+      await ImageCloud.updateOne({ key: 'main' }, { $set: { lastError: `مفتاح جهاز ${node.name || node.nodeId}: ${t.message}`, lastErrorAt: new Date() } });
+      return res.json({ success: true, enabled: true, message: t.message });
+    }
+    await ImageCloud.updateOne({ key: 'main' }, { $set: { apiKey, baseUrl, keyNodeId: node.nodeId, keyRejectedAt: null, nodeName: t.node || '', lastOkAt: new Date(), lastError: '',
+      linkedFrom: `DiyarPOS — ${node.name || node.nodeId}` } });
+    imageCloud.invalidate();
+    realtime.broadcast('imagecloud.alert', { level: 'ok', message: `✓ سحابة الصور: الرفع الآن إلى جهاز ${node.name || node.nodeId} (مفتاحه مُختبَر)` });
+    return res.json({ success: true, enabled: true, message: 'سحابة الصور تعمل على هذا الجهاز' });
+  }
+  await ImageCloud.updateOne({ key: 'main' }, { $set: { apiKey, keyNodeId: node.nodeId, keyRejectedAt: null, wantEnabled: true, linkedFrom: `DiyarPOS — ${node.name || node.nodeId}` } });
   imageCloud.invalidate();
   await tryAutoEnable(req, true);
   const cur = await ImageCloud.findOne({ key: 'main' }).lean();

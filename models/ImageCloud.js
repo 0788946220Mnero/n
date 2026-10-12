@@ -14,7 +14,8 @@ const imageCloudSchema = new mongoose.Schema(
     baseUrl: { type: String, default: '', trim: true },   // الرابط العام (نفق Cloudflare مثلاً)
     projectId: { type: String, default: '', trim: true },
     apiKey: { type: String, default: '', select: false },
-    keyNodeId: { type: String, default: '' },             // الجهاز الذي أنشأ المفتاح — النفق يوجّه إليه أولاً
+    keyNodeId: { type: String, default: '' },
+    keyRejectedAt: { type: Date, default: null },          // رفض جهاز الصور المفتاح (401/403) ← يُطلب مفتاح من جهاز متصل             // الجهاز الذي أنشأ المفتاح — النفق يوجّه إليه أولاً
     nodeName: { type: String, default: '' },              // اسم الجهاز كما يعرّف نفسه
     linkedFrom: { type: String, default: '' },            // «DiyarPOS — اسم الجهاز» أو «لوحة التحكم»
     updatedByName: { type: String, default: '' },
