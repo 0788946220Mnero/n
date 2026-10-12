@@ -182,13 +182,18 @@ async function post({ accountId, type, points, idemKey, noOverdraw = false, ...m
   const existing = await LoyaltyTransaction.findOne({ idemKey }).lean();
   if (existing) return { tx: existing, duplicate: true, account: await LoyaltyAccount.findById(existing.account).lean() };
 
-  const out = await withTxn(async (session) => {
+  const DUP = 'loyalty-duplicate';
+  let out;
+  try {
+    out = await withTxn(async (session) => {
     const opt = session ? { session } : {};
     let tx;
     try {
       [tx] = await LoyaltyTransaction.create([{ account: accountId, type, points, idemKey, balanceAfter: 0, ...meta }], opt);
     } catch (e) {
-      if (isDup(e)) return { duplicate: true };
+      // داخل معاملة Mongo: خطأ المفتاح المكرر يُبطل المعاملة كلها على الخادم، فلا يصح «الإرجاع» منها —
+      // نرمي علامة تُلغي المعاملة بنظافة، ثم نرجع المعاملة الأصلية من خارجها
+      if (isDup(e)) throw Object.assign(new Error(DUP), { [DUP]: true });
       throw e;
     }
     // العكس (إلغاء فاتورة) يُنفَّذ حتى على عضوية موقوفة؛ الاكتساب والاستبدال والتعديل للعضوية الفعّالة فقط
@@ -209,7 +214,11 @@ async function post({ accountId, type, points, idemKey, noOverdraw = false, ...m
     }
     await LoyaltyTransaction.updateOne({ _id: tx._id }, { $set: { balanceAfter: account.balance } }, opt);
     return { tx: { ...(tx.toObject ? tx.toObject() : tx), balanceAfter: account.balance }, account: account.toObject ? account.toObject() : account };
-  });
+    });
+  } catch (e) {
+    if (!(e && (e[DUP] || isDup(e)))) throw e;
+    out = { duplicate: true };
+  }
   if (out.duplicate) {
     const tx = await LoyaltyTransaction.findOne({ idemKey }).lean();
     return { tx, duplicate: true, account: tx ? await LoyaltyAccount.findById(tx.account).lean() : null };
