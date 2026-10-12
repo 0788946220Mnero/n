@@ -95,7 +95,7 @@ function serve(storage, baseUrl = '/api/products') {
   const app = express();
   const up = multer({ storage });
   app.post(`${baseUrl}`, up.single('image'), (req, res) => res.json({ file: req.file }));
-  app.use((err, req, res, _n) => res.status(err.status || 500).json({ message: err.message }));
+  app.use(require('../middlewares/errorHandler').errorHandler); // معالج الخادم الحقيقي: الرسالة والرمز كما يراهما المستخدم
   return new Promise((r) => { const s = app.listen(0, () => r(s)); });
 }
 async function post(server, baseUrl = '/api/products', buf = photo()) {
@@ -130,8 +130,35 @@ test('مفعّلة ← الصنف يُحفظ برابط سحابة الصور (m
   assert.ok(DOC.uploads >= 2);
 });
 
-test('الجهاز لا يرد ← نفس الصورة تُرفع لـ Cloudinary ويُسجَّل السبب', async () => {
+test('السحابة المحلية مختارة والجهاز لا يرد ← لا Cloudinary: الصورة تُرفض برسالة واضحة', async () => {
   reset({ enabled: true, baseUrl: 'http://127.0.0.1:1', apiKey: 'isk_abcdefghijk' });
+  const cloudinary = require('../config/cloudinary');
+  const orig = cloudinary.uploader.upload_stream;
+  let calls = 0;
+  cloudinary.uploader.upload_stream = (opts, cb) => ({ end() { calls++; cb(null, { secure_url: 'x', public_id: 'x' }); } });
+  const { HybridStorage } = require('../middlewares/upload');
+  const prevEnv = process.env.NODE_ENV; process.env.NODE_ENV = 'production'; // كما في Railway: الرسالة تصل لا «خطأ في الخادم»
+  const s = await serve(new HybridStorage(fakeFallback));
+  const r = await post(s);
+  s.close(); process.env.NODE_ENV = prevEnv;
+  cloudinary.uploader.upload_stream = orig;
+  assert.equal(r.status, 503);
+  assert.match(r.body.message, /لم تُرفع الصورة — سحابة الصور: .*لا يرد.*شغّل DiyarPOS/);
+  assert.equal(calls, 0, 'لا شيء إلى Cloudinary');
+  await wait(50);
+  assert.ok(!DOC.fallbacks, 'لا «رجوع» محسوب');
+  assert.match(DOC.lastError, /لا يرد/);
+
+  // بانتظار التفعيل (لم يرد الجهاز بعد) ← نفس الرفض بالسبب، لا Cloudinary
+  reset({ enabled: false, wantEnabled: true, lastError: 'لا يوجد جهاز صور متصل بالخادم', baseUrl: 'http://127.0.0.1:1' });
+  const s2 = await serve(new HybridStorage(fakeFallback));
+  const r2 = await post(s2); s2.close();
+  assert.equal(r2.status, 503);
+  assert.match(r2.body.message, /لم تُفعَّل بعد — لا يوجد جهاز صور متصل/);
+});
+
+test('الرجوع لـ Cloudinary مسموح صراحة ← نفس الصورة تُرفع لـ Cloudinary ويُسجَّل السبب', async () => {
+  reset({ enabled: true, baseUrl: 'http://127.0.0.1:1', apiKey: 'isk_abcdefghijk', cloudinaryFallback: true });
   const cloudinary = require('../config/cloudinary');
   const orig = cloudinary.uploader.upload_stream;
   let got = 0;
@@ -147,6 +174,15 @@ test('الجهاز لا يرد ← نفس الصورة تُرفع لـ Cloudinar
   await wait(50);
   assert.equal(DOC.fallbacks, 1);
   assert.match(DOC.lastError, /لا يرد/);
+});
+
+test('لم تُختر السحابة المحلية أصلاً ← Cloudinary كما كان', async () => {
+  reset(null);
+  const { HybridStorage } = require('../middlewares/upload');
+  const s = await serve(new HybridStorage(fakeFallback));
+  const r = await post(s); s.close();
+  assert.equal(r.status, 200);
+  assert.match(r.body.file.path, /cloudinary/);
 });
 
 /* ── النقل من Cloudinary ── */

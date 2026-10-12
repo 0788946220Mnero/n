@@ -14,8 +14,10 @@ const imageCloudSchema = new mongoose.Schema(
     baseUrl: { type: String, default: '', trim: true },   // الرابط العام (نفق Cloudflare مثلاً)
     projectId: { type: String, default: '', trim: true },
     apiKey: { type: String, default: '', select: false },
-    keyNodeId: { type: String, default: '' },
-    keyRejectedAt: { type: Date, default: null },          // رفض جهاز الصور المفتاح (401/403) ← يُطلب مفتاح من جهاز متصل             // الجهاز الذي أنشأ المفتاح — النفق يوجّه إليه أولاً
+    keyNodeId: { type: String, default: '' },             // الجهاز الذي أنشأ المفتاح — النفق يوجّه إليه أولاً
+    keyRejectedAt: { type: Date, default: null },         // رفض جهاز الصور المفتاح (401/403) ← يُطلب مفتاح من جهاز متصل
+    // الرجوع لـ Cloudinary إن لم يرد جهاز الصور — معطّل افتراضياً: الصورة إما على السحابة المحلية أو خطأ واضح
+    cloudinaryFallback: { type: Boolean, default: false },
     nodeName: { type: String, default: '' },              // اسم الجهاز كما يعرّف نفسه
     linkedFrom: { type: String, default: '' },            // «DiyarPOS — اسم الجهاز» أو «لوحة التحكم»
     updatedByName: { type: String, default: '' },
@@ -63,11 +65,14 @@ const imageCloudSchema = new mongoose.Schema(
       approvedAt: { type: Date, default: null },
     }],
     migration: {
-      status: { type: String, enum: ['idle', 'running', 'done', 'failed', 'interrupted'], default: 'idle' },
+      // done = كل الصور نُقلت وتُعرض من السحابة؛ partial = بعضها بقي على Cloudinary (السبب في errors)
+      status: { type: String, enum: ['idle', 'running', 'done', 'partial', 'failed', 'interrupted'], default: 'idle' },
       total: { type: Number, default: 0 },
       done: { type: Number, default: 0 },
       failed: { type: Number, default: 0 },
       updatedDocs: { type: Number, default: 0 },
+      verified: { type: Number, default: 0 },       // صور تأكدنا أنها تُعرض من رابطها الجديد قبل استبداله
+      remaining: { type: Number, default: 0 },      // روابط Cloudinary الباقية بعد النقل (مسح فعلي للقاعدة)
       startedAt: { type: Date, default: null },
       finishedAt: { type: Date, default: null },
       byName: { type: String, default: '' },

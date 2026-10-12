@@ -76,16 +76,28 @@ function cloudinaryFromBuffer(buf) {
   });
 }
 
+/** رفض الرفع بسبب واضح (يعرضه errorHandler عبر statusCode) — لا رجوع صامت لـ Cloudinary. */
+function refused(reason) {
+  return Object.assign(new Error(`لم تُرفع الصورة — سحابة الصور: ${reason}. شغّل DiyarPOS على جهاز الكاشير ثم أعد المحاولة.`), { status: 503, statusCode: 503 });
+}
+/** يستهلك تيار الملف قبل الرد (multer ينتظر انتهاءه). */
+function drain(file, done) { let fired = false; const once = () => { if (!fired) { fired = true; done(); } }; file.stream.on('end', once); file.stream.on('error', once); file.stream.resume(); }
+
 class HybridStorage {
   constructor(fallback) { this.fallback = fallback; }
 
   _handleFile(req, file, cb) {
     if (isVideoFile(file)) return this.fallback._handleFile(req, file, cb);
     imageCloud.activeConfig().catch(() => null).then((cfg) => {
+      const pol = imageCloud.policy();
       if (!cfg) {
-        // مفعّلة لكن ناقصة: يُسجَّل السبب (يظهر في بطاقة السحابة) بدل الرجوع الصامت
-        const why = imageCloud.inactiveReason();
-        if (why) imageCloud.note(false, why, { fallback: true });
+        // السحابة المحلية مختارة: لا Cloudinary — الصورة لم تُرفع، والسبب يصل للوحة كما هو
+        if (pol.localOnly) {
+          imageCloud.note(false, pol.reason || 'سحابة الصور غير جاهزة');
+          return drain(file, () => cb(refused(pol.reason || 'سحابة الصور غير جاهزة')));
+        }
+        // مفعّلة لكن ناقصة والرجوع مسموح: يُسجَّل السبب بدل الرجوع الصامت
+        if (pol.reason) imageCloud.note(false, pol.reason, { fallback: true });
         return this.fallback._handleFile(req, file, cb);
       }
       const chunks = [];
@@ -98,11 +110,15 @@ class HybridStorage {
             cfg, filename: file.originalname, mime: file.mimetype,
             folder: imageCloud.folderFor(req), variant: imageCloud.variantFor(req),
           });
+          // النجاح = الصورة تُعرض من رابطها (لا يكفي أن الجهاز قبل الملف)
+          const v = await imageCloud.verifyMedia(cfg, r.id, imageCloud.variantFor(req));
+          if (!v.ok) { imageCloud.remove(r.id, cfg).catch(() => {}); throw Object.assign(new Error(v.message), { status: 0 }); }
           imageCloud.note(true, null, { upload: true });
           cb(null, { path: r.url, filename: r.id, size: buf.length, storage: 'imagecloud' });
         } catch (err) {
           // رفض حقيقي للملف (ليس صورة/تالف/كبير): نعيد رسالة الخدمة العربية كما هي
-          if ([413, 415, 422].includes(err.status)) return cb(Object.assign(new Error(err.message), { status: 400 }));
+          if ([413, 415, 422].includes(err.status)) return cb(Object.assign(new Error(err.message), { status: 400, statusCode: 400 }));
+          if (pol.localOnly) { imageCloud.note(false, err); return cb(refused(err.message)); }
           imageCloud.note(false, err, { fallback: true });
           try {
             const r = await cloudinaryFromBuffer(buf);

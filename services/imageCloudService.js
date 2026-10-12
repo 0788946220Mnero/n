@@ -39,7 +39,8 @@ async function getDoc({ withKey = false } = {}) {
 async function activeConfig() {
   if (cache && Date.now() - cacheAt < TTL_MS) return cache.enabled ? cache : null;
   const d = await getDoc({ withKey: true });
-  cache = d ? { enabled: !!d.enabled, baseUrl: trimUrl(d.baseUrl), apiKey: d.apiKey || '', projectId: d.projectId || '', keyNodeId: d.keyNodeId || '' } : { enabled: false };
+  cache = d ? { enabled: !!d.enabled, wantEnabled: !!d.wantEnabled, cloudinaryFallback: !!d.cloudinaryFallback, lastError: d.lastError || '',
+    baseUrl: trimUrl(d.baseUrl), apiKey: d.apiKey || '', projectId: d.projectId || '', keyNodeId: d.keyNodeId || '' } : { enabled: false };
   cacheAt = Date.now();
   relay.setPreferred(cache.keyNodeId); // النفق يوجّه لصاحب المفتاح أولاً
   return cache.enabled && cache.baseUrl && cache.apiKey ? cache : null;
@@ -50,6 +51,44 @@ function inactiveReason() {
   if (!cache.apiKey) return 'لا يوجد مفتاح رفع — بانتظار أن يرسله جهاز الكاشير المتصل';
   if (!cache.baseUrl) return 'لم يُضبط رابط سحابة الصور';
   return '';
+}
+
+/**
+ * سياسة الرفع (بعد activeConfig): اختار المدير السحابة المحلية (مفعّلة أو بانتظار التفعيل)
+ * ← الصور لها وحدها؛ لا رجوع لـ Cloudinary إلا إن سمح به صراحة (cloudinaryFallback).
+ */
+function policy() {
+  const c = cache || {};
+  const chosen = !!(c.enabled || c.wantEnabled);
+  let reason = inactiveReason();
+  if (!reason && chosen && !c.enabled) reason = `لم تُفعَّل بعد — ${c.lastError || 'بانتظار اتصال جهاز الكاشير (DiyarPOS)'}`;
+  return { chosen, localOnly: chosen && !c.cloudinaryFallback, reason };
+}
+
+/**
+ * تتأكد أن الصورة تُعرض فعلاً من رابطها العام (كما يراها الزبون) — لا يكفي أن الرفع قُبل.
+ * عبر النفق: نفس مسار العرض العام (كل الأجهزة المتصلة). نسخة قيد التجهيز (503/404) ← انتظار وإعادة.
+ */
+async function verifyMedia(cfg, id, variant = 'large', { tries = 4, waitMs = 1500 } = {}) {
+  const path = `/media/${encodeURIComponent(id)}/${variant}`;
+  let last = '';
+  for (let i = 0; i < tries; i++) {
+    try {
+      let status; let type; let size;
+      if (relay.isRelayUrl(cfg.baseUrl)) {
+        const r = await relay.request('GET', path, { headers: { accept: 'image/*' }, tryAllOn404: true, prefer: cfg.keyNodeId });
+        status = r.status; type = String((r.headers || {})['content-type'] || (r.headers || {})['Content-Type'] || ''); size = r.body.length;
+      } else {
+        const r = await fetch(`${cfg.baseUrl}${path}`, { headers: { accept: 'image/*' }, signal: AbortSignal.timeout(15000) });
+        status = r.status; type = r.headers.get('content-type') || ''; size = (await r.arrayBuffer()).byteLength;
+      }
+      if (status === 200 && /^image\//i.test(type) && size > 0) return { ok: true, size };
+      last = status === 200 ? `الرد ليس صورة (${type || 'بلا نوع'})` : `HTTP ${status}`;
+      if (![404, 425, 503].includes(status)) break;
+    } catch (err) { last = err.message; }
+    if (i < tries - 1) await new Promise((ok) => setTimeout(ok, waitMs));
+  }
+  return { ok: false, message: `رُفعت لكنها لا تُعرض من رابطها: ${last}` };
 }
 function invalidate() { cache = null; cacheAt = 0; }
 
@@ -156,4 +195,4 @@ function folderFor(req) {
   return p.split(/[/?]/)[0] || 'misc';
 }
 
-module.exports = { activeConfig, invalidate, upload, remove, test, note, mediaUrl, getDoc, variantFor, folderFor, trimUrl, inactiveReason };
+module.exports = { activeConfig, invalidate, upload, remove, test, note, mediaUrl, getDoc, variantFor, folderFor, trimUrl, inactiveReason, policy, verifyMedia };

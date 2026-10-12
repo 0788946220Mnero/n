@@ -77,17 +77,19 @@ async function scan() {
 
 async function run(byName) {
   const cfg = await imageCloud.activeConfig();
-  if (!cfg) throw Object.assign(new Error('فعّل سحابة الصور واربطها أولاً'), { status: 400 });
+  if (!cfg) throw Object.assign(new Error(imageCloud.policy().reason || 'فعّل سحابة الصور واربطها أولاً'), { status: 400 });
   const t = await imageCloud.test(cfg);
   if (!t.ok) throw Object.assign(new Error(t.message), { status: 400 });
 
   const { docs, unique } = await scan();
-  await save({ status: 'running', total: unique.size, done: 0, failed: 0, updatedDocs: 0, startedAt: new Date(), finishedAt: null, byName: byName || '', errors: [] });
+  await save({ status: 'running', total: unique.size, done: 0, failed: 0, verified: 0, updatedDocs: 0, remaining: 0,
+    startedAt: new Date(), finishedAt: null, byName: byName || '', errors: [] });
 
-  const mapped = new Map(); // key → newUrl
+  const mapped = new Map(); // key → newUrl (فقط ما تأكدنا أنه يُعرض)
   const errors = [];
   let done = 0; let failed = 0; let lastSave = 0;
   const queue = Array.from(unique.entries());
+  const fail = (url, message) => { failed++; if (errors.length < 30) errors.push({ url, message: String(message).slice(0, 200) }); };
 
   async function worker() {
     for (;;) {
@@ -96,6 +98,7 @@ async function run(byName) {
       const [key, { url, src }] = item;
       try {
         const { buf, mime } = await download(url);
+        if (!/^image\//i.test(mime) || !buf.length) throw new Error(`ليس صورة (${mime})`);
         const name = path.basename(new URL(url).pathname) || 'image.jpg';
         // حدّ الرفع في الخدمة (429) أو نسخة قيد التجهيز (503): ننتظر ونعيد حتى 4 مرات
         let r;
@@ -105,33 +108,39 @@ async function run(byName) {
             await new Promise((ok) => setTimeout(ok, 2000 * (attempt + 1)));
           }
         }
+        // «نُقلت» تعني أنها تُعرض من رابطها الجديد — وإلا يبقى رابط Cloudinary كما هو
+        const v = await imageCloud.verifyMedia(cfg, r.id, src.variant);
+        if (!v.ok) { imageCloud.remove(r.id, cfg).catch(() => {}); throw new Error(v.message); }
         mapped.set(key, r.url);
         done++;
       } catch (err) {
-        failed++;
-        if (errors.length < 30) errors.push({ url, message: String(err.message || err).slice(0, 200) });
+        fail(url, err.message || err);
       }
-      if (Date.now() - lastSave > 1500) { lastSave = Date.now(); await save({ done, failed, errors }).catch(() => {}); }
+      if (Date.now() - lastSave > 1500) { lastSave = Date.now(); await save({ done, failed, verified: done, errors }).catch(() => {}); }
     }
   }
   await Promise.all(Array.from({ length: Math.max(1, CONCURRENCY) }, worker));
 
   // استبدال الروابط في الوثائق — بشرط أن يبقى الحقل على الرابط القديم
-  let updatedDocs = 0;
+  let updatedDocs = 0; let skipped = 0;
   for (const d of docs) {
     let changed = false;
     for (const ref of d.refs) {
       const nu = mapped.get(`${d.src.variant}|${ref.url}`);
       if (!nu) continue;
       const r = await d.src.model.collection.updateOne({ _id: d._id, [ref.path]: ref.url }, { $set: { [ref.path]: nu } });
-      if (r.modifiedCount) changed = true;
+      if (r.modifiedCount) changed = true; else skipped++;
     }
     if (changed) updatedDocs++;
   }
+  if (skipped && errors.length < 30) errors.push({ url: '', message: `${skipped} رابط تغيّر أثناء النقل (عُدّل يدوياً) فلم يُستبدل` });
 
-  const status = failed && !done ? 'failed' : 'done';
-  await save({ status, done, failed, updatedDocs, errors, finishedAt: new Date() });
-  return { status, total: unique.size, done, failed, updatedDocs };
+  // العدّ الحقيقي: كم رابط Cloudinary بقي في القاعدة بعد النقل
+  const after = await scan();
+  const remaining = after.unique.size;
+  const status = remaining === 0 ? 'done' : (done ? 'partial' : 'failed');
+  await save({ status, done, failed, verified: done, updatedDocs, remaining, errors, finishedAt: new Date() });
+  return { status, total: unique.size, done, failed, updatedDocs, remaining };
 }
 
 /** يبدأ النقل في الخلفية (لا ينتظره الطلب). يرجع الحالة الحالية إن كان يعمل. */
@@ -139,7 +148,7 @@ async function start(byName) {
   if (running) return { already: true };
   // فحوص سريعة قبل الرد (رسالة واضحة إن لم تُربط السحابة)
   const cfg = await imageCloud.activeConfig();
-  if (!cfg) throw Object.assign(new Error('فعّل سحابة الصور واربطها أولاً'), { status: 400 });
+  if (!cfg) throw Object.assign(new Error(imageCloud.policy().reason || 'فعّل سحابة الصور واربطها أولاً'), { status: 400 });
   running = run(byName)
     .catch(async (err) => { await save({ status: 'failed', finishedAt: new Date(), errors: [{ url: '', message: String(err.message || err).slice(0, 200) }] }).catch(() => {}); })
     .finally(() => { running = null; });

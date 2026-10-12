@@ -47,6 +47,7 @@ async function view() {
     uploads: d.uploads || 0, fallbacks: d.fallbacks || 0,
     syncReady: !!d.syncSecret || (d.nodes || []).length > 0,
     hasTunnel: !!d.tunnelToken,
+    cloudinaryFallback: !!d.cloudinaryFallback,
     viaRelay: relay.isRelayUrl(d.baseUrl),
     relayDevices: relay.status(),
     nodes: nodesSvc.view(d.nodes || []),
@@ -59,6 +60,12 @@ const get = async (req, res) => res.json({ success: true, cloud: await view() })
 
 const update = async (req, res) => {
   const b = req.body || {};
+  // مفتاح «الرجوع لـ Cloudinary» وحده: لا يعيد فحص السحابة ولا يغيّر تفعيلها
+  if (Object.keys(b).length === 1 && typeof b.cloudinaryFallback === 'boolean') {
+    await ImageCloud.updateOne({ key: 'main' }, { $set: { cloudinaryFallback: b.cloudinaryFallback, updatedByName: nameOf(req.user) } }, { upsert: true });
+    imageCloud.invalidate();
+    return res.json({ success: true, cloud: await view() });
+  }
   const cur = await ImageCloud.findOne({ key: 'main' }).select('+apiKey').lean();
   const next = {
     enabled: b.enabled != null ? !!b.enabled : !!(cur && cur.enabled),
@@ -91,6 +98,7 @@ const update = async (req, res) => {
   const $set = { ...next, updatedByName: nameOf(req.user) };
   if (b.enabled != null) $set.wantEnabled = !!b.enabled;
   if (b.nodeName) $set.nodeName = String(b.nodeName).slice(0, 80);
+  if (typeof b.cloudinaryFallback === 'boolean') $set.cloudinaryFallback = b.cloudinaryFallback;
   if (b.linkedFrom != null) $set.linkedFrom = String(b.linkedFrom).slice(0, 80);
   // مفتاح جديد من DiyarPOS: صاحبه هو الجهاز المرسِل (النفق يوجّه إليه)
   if (typeof b.apiKey === 'string' && b.apiKey.trim()) $set.keyNodeId = nodesSvc.ID_RX.test(String(b.nodeId || '')) ? String(b.nodeId) : '';

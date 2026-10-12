@@ -354,3 +354,54 @@ test('صورة على جهاز آخر (شبكتان لا تتزامنان) ← �
   const nf = await get('/api/image-cloud/relay/media/01NOWHERE/medium');
   assert.equal(nf.status, 404, 'غير موجودة في أي جهاز ← 404');
 });
+
+/* ───────── النقل من Cloudinary: لا نجاح وهمي ───────── */
+test('النقل: صورة قُبل رفعها لكنها لا تُعرض ← لا يُستبدل رابطها، والنتيجة «جزئي» لا «اكتمل»', async () => {
+  const migration = require('../services/imageMigrationService');
+  relay.reset();
+  let n = 0;
+  dev = await device('pos-relay-1', 'SECRET-R', { onReq: (m, b, reply) => {
+    const json = (o) => reply(200, { 'content-type': 'application/json' }, Buffer.from(JSON.stringify(o)));
+    if (m.path === '/api/v1/health') return json({ status: 'ok', node: 'pos-relay-1' });
+    if (m.path.startsWith('/api/v1/images') && m.method === 'GET') return json({ items: [] });
+    if (m.path === '/api/v1/images' && m.method === 'POST') {
+      // الملف الأول «يُقبل» لكن نسخه لا تُنشأ أبداً (هذا ما كان يُحسب نجاحاً)
+      n++; return reply(201, { 'content-type': 'application/json' }, Buffer.from(JSON.stringify({ id: n === 1 ? '01BROKEN' : `01GOOD${n}` })));
+    }
+    if (m.path.startsWith('/media/01GOOD')) return reply(200, { 'content-type': 'image/jpeg' }, IMG);
+    return reply(404, {}, null);
+  } });
+  DOC = { key: 'main', enabled: true, apiKey: 'isk_relaytestkey123', keyNodeId: 'pos-relay-1', baseUrl: `${base}/api/image-cloud/relay`, projectId: 'diyar',
+    nodes: [{ nodeId: 'pos-relay-1', name: 'CASHIER', proofHash: sha('SECRET-R') }] };
+  imageCloud.invalidate();
+  const mk = (docs) => ({
+    docs,
+    find: () => ({ toArray: async () => JSON.parse(JSON.stringify(docs)) }),
+    updateOne: async (f, u) => { const d = docs.find((x) => x._id === f._id); const [p, val] = Object.entries(u.$set)[0];
+      if (!d || d[p] !== f[p]) return { modifiedCount: 0 }; d[p] = val; return { modifiedCount: 1 }; },
+  });
+  const C = 'https://res.cloudinary.com/demo/image/upload/v1/diyar-alanbat/';
+  const P = mk([{ _id: 'p1', image: `${C}a.jpg` }, { _id: 'p2', image: `${C}b.jpg` }]);
+  require('../models/Product').collection = P;
+  require('../models/Category').collection = mk([]);
+  require('../models/Setting').collection = mk([]);
+  require('../models/Notification').collection = mk([]);
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (url, opts) => (String(url).startsWith('https://res.cloudinary.com/')
+    ? Promise.resolve(new Response(IMG, { status: 200, headers: { 'content-type': 'image/jpeg' } })) : realFetch(url, opts));
+  try {
+    const r = await migration.run('مروان');
+    assert.equal(r.total, 2);
+    assert.equal(r.done, 1, 'واحدة فقط تُعرض فعلاً');
+    assert.equal(r.failed, 1);
+    assert.equal(r.remaining, 1, 'عدّ حقيقي من القاعدة: رابط واحد بقي على Cloudinary');
+    assert.equal(r.status, 'partial', 'لا «اكتمل» وصورة لم تُنقل');
+    const broken = P.docs.find((d) => d.image === `${C}a.jpg` || d.image === `${C}b.jpg`);
+    assert.ok(broken, 'الصورة التي لا تُعرض بقي رابطها على Cloudinary (لم تنكسر في الموقع)');
+    assert.ok(P.docs.some((d) => /\/api\/image-cloud\/relay\/media\/01GOOD\d\/medium$/.test(d.image)), 'الأخرى استُبدلت برابط يعمل');
+    assert.equal(DOC['migration.status'], 'partial');
+    assert.match(JSON.stringify(DOC['migration.errors']), /لا تُعرض من رابطها/);
+    for (let i = 0; i < 40 && !dev.seen.some((m) => m.method === 'DELETE'); i++) await wait(25);
+    assert.ok(dev.seen.some((m) => m.method === 'DELETE' && m.path.includes('01BROKEN')), 'النسخة المكسورة حُذفت من الجهاز');
+  } finally { globalThis.fetch = realFetch; }
+});
