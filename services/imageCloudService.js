@@ -15,7 +15,7 @@ const relay = require('./imageRelayService');
 
 /**
  * الطلب لخدمة الصور: مباشرة على الرابط العام (نفق Cloudflare مثلاً)، أو — إن كان الرابط
- * نفق خادم ديار (/api/image-cloud/relay) — عبر اتصال الجهاز داخل هذا الخادم بلا خروج للإنترنت.
+ * نفق سيرفر ميرو السحابي (/api/image-cloud/relay) — عبر اتصال الجهاز داخل هذا الخادم بلا خروج للإنترنت.
  */
 function cfgFetch(cfg, path, init = {}) {
   if (relay.isRelayUrl(cfg.baseUrl)) { const { signal, ...rest } = init; return relay.relayFetch(path, rest, cfg.keyNodeId); }
@@ -61,9 +61,20 @@ function inactiveReason() {
 function policy() {
   const c = cache || {};
   const chosen = !!(c.enabled || c.wantEnabled);
+  const cdn = cloudinaryUploads();
   let reason = inactiveReason();
   if (!reason && chosen && !c.enabled) reason = `لم تُفعَّل بعد — ${c.lastError || 'بانتظار اتصال جهاز الكاشير (DiyarPOS)'}`;
-  return { chosen, localOnly: chosen && !c.cloudinaryFallback, reason };
+  if (!reason && !chosen && !cdn) reason = 'غير مفعّلة — فعّلها من لوحة التحكم ← الإعدادات ← سحابة الصور (Cloudinary موقوف)';
+  // Cloudinary موقوف ← كل صورة على السحابة المحلية أو تُرفض بسببها، مهما كان مفتاح «الرجوع» في اللوحة
+  return { chosen, localOnly: !cdn || (chosen && !c.cloudinaryFallback), reason };
+}
+
+/**
+ * Cloudinary موقوف افتراضياً: لا رفع جديد إليه أبداً (صوره القديمة تبقى تُعرض من روابطها، والنقل يقرأها).
+ * إعادة تشغيله طارئاً فقط: متغير البيئة CLOUDINARY_UPLOADS=on على سيرفر ميرو السحابي.
+ */
+function cloudinaryUploads() {
+  return String(process.env.CLOUDINARY_UPLOADS || '').trim().toLowerCase() === 'on';
 }
 
 /**
@@ -196,4 +207,4 @@ function folderFor(req) {
   return p.split(/[/?]/)[0] || 'misc';
 }
 
-module.exports = { activeConfig, invalidate, upload, remove, test, note, mediaUrl, getDoc, variantFor, folderFor, trimUrl, inactiveReason, policy, verifyMedia, _fetch: cfgFetch };
+module.exports = { activeConfig, invalidate, upload, remove, test, note, mediaUrl, getDoc, variantFor, folderFor, trimUrl, inactiveReason, policy, cloudinaryUploads, verifyMedia, _fetch: cfgFetch };

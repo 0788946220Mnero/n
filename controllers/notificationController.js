@@ -190,7 +190,7 @@ const getDiagnostics = async (req, res) => {
   const hasEmail = !!process.env.FIREBASE_CLIENT_EMAIL;
   const hasKey = !!process.env.FIREBASE_PRIVATE_KEY;
 
-  add(hasProject, 'FIREBASE_PROJECT_ID مضبوط', 'أضفه في Railway ← Variables');
+  add(hasProject, 'FIREBASE_PROJECT_ID مضبوط', 'أضفه في متغيرات سيرفر ميرو السحابي (Variables)');
   add(hasEmail, 'FIREBASE_CLIENT_EMAIL مضبوط', 'من Firebase ← Service accounts');
   add(hasKey, 'FIREBASE_PRIVATE_KEY مضبوط', 'انسخه كاملاً مع BEGIN/END');
 
@@ -203,7 +203,7 @@ const getDiagnostics = async (req, res) => {
 
   // ٢) هل تمّت تهيئة Firebase Admin فعلاً؟
   const fcmReady = pushService.isEnabled();
-  add(fcmReady, 'Firebase Admin مُهيّأ في الخادم', 'راجع سجلات Railway عند الإقلاع');
+  add(fcmReady, 'Firebase Admin مُهيّأ في الخادم', 'راجع سجلات سيرفر ميرو السحابي عند الإقلاع');
 
   // ٣) هل هناك أجهزة مشتركة أصلاً؟
   const [total, ios, android, web, standalone] = await Promise.all([

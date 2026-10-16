@@ -1,5 +1,5 @@
 /**
- * نفق الصور عبر خادم ديار: جهاز (وهمي هنا — والحقيقي في اختبارات DiyarPOS) يتصل بـ WebSocket،
+ * نفق الصور عبر سيرفر ميرو السحابي: جهاز (وهمي هنا — والحقيقي في اختبارات DiyarPOS) يتصل بـ WebSocket،
  * والصور تُعرض للعامة عبر الخادم، والرفع والفحص يمرّان داخلياً.
  *   node --test tests/imageRelay.test.js
  */
@@ -407,7 +407,7 @@ test('النقل: صورة قُبل رفعها لكنها لا تُعرض ← ل
 });
 
 /* ───────── رابط عام ميت (Cloudflare بلا cloudflared) والنفق متصل — حالة شاشة DiyarPOS ───────── */
-test('رابط عام لا يرد (Https://images…) والنفق متصل ← تُفعَّل عبر خادم ديار بدل الانتظار للأبد', async () => {
+test('رابط عام لا يرد (Https://images…) والنفق متصل ← تُفعَّل عبر سيرفر ميرو السحابي بدل الانتظار للأبد', async () => {
   relay.reset();
   DOC = { key: 'main', enabled: false, wantEnabled: true, apiKey: 'isk_relaytestkey123', keyNodeId: 'pos-relay-1', projectId: 'diyar',
     baseUrl: 'https://images.diyar-dead.invalid', lastError: 'جهاز الصور لا يرد على https://images.diyar-dead.invalid',
@@ -418,7 +418,7 @@ test('رابط عام لا يرد (Https://images…) والنفق متصل ← 
   for (let i = 0; i < 80 && !DOC.enabled; i++) await wait(25);
   assert.equal(DOC.enabled, true, DOC.lastError);
   assert.match(DOC.baseUrl, /\/api\/image-cloud\/relay$/, 'النفق بدل الرابط الميت');
-  assert.ok(sent.some((m) => /لا يرد .*فُعّلت السحابة عبر خادم ديار/.test(m.message || '')), 'إشعار بالسبب');
+  assert.ok(sent.some((m) => /لا يرد .*فُعّلت السحابة عبر سيرفر ميرو السحابي/.test(m.message || '')), 'إشعار بالسبب');
 
   // «ربط بالخادم» من DiyarPOS بنفس الرابط الميت (كما في الصورة) ← يُفعَّل عبر النفق مع رسالة، لا «لم تُفعَّل بعد»
   DOC = { ...DOC, enabled: false, baseUrl: '' };
@@ -430,7 +430,7 @@ test('رابط عام لا يرد (Https://images…) والنفق متصل ← 
   assert.equal(j.cloud.enabled, true);
   assert.equal(j.cloud.viaRelay, true);
   assert.ok(!j.pending);
-  assert.match(j.message, /لا يرد .*عبر خادم ديار/);
+  assert.match(j.message, /لا يرد .*عبر سيرفر ميرو السحابي/);
 });
 
 test('مفعّلة برابط عام توقف عن الرد ← تتحول للنفق مع النبض', async () => {

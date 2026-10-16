@@ -104,16 +104,71 @@ async function post(server, baseUrl = '/api/products', buf = photo()) {
   const res = await fetch(`http://127.0.0.1:${server.address().port}${baseUrl}`, { method: 'POST', body: form });
   return { status: res.status, body: await res.json() };
 }
+// Cloudinary موقوف افتراضياً؛ وضع الطوارئ (CLOUDINARY_UPLOADS=on) يُختبر صراحة فقط
+delete process.env.CLOUDINARY_UPLOADS;
+async function withCdn(fn) { process.env.CLOUDINARY_UPLOADS = 'on'; try { return await fn(); } finally { delete process.env.CLOUDINARY_UPLOADS; } }
 const fakeFallback = { _handleFile(req, file, cb) { file.stream.resume(); file.stream.on('end', () => cb(null, { path: 'https://res.cloudinary.com/demo/image/upload/fallback.jpg', storage: 'cloudinary-stream' })); }, _removeFile(r, f, cb) { cb(null); } };
 
-test('غير مفعّلة ← Cloudinary كما كان تماماً', async () => {
+test('Cloudinary موقوف (الافتراضي): سحابة غير مفعّلة ← الصورة تُرفض بسبب واضح ولا شيء يذهب لـ Cloudinary', async () => {
+  reset({ enabled: false });
+  const cloudinary = require('../config/cloudinary');
+  const orig = cloudinary.uploader.upload_stream; let calls = 0;
+  cloudinary.uploader.upload_stream = (opts, cb) => ({ end() { calls++; cb(null, { secure_url: 'x', public_id: 'x' }); } });
+  let fbCalls = 0;
+  const spy = { _handleFile(req, file, cb) { fbCalls++; fakeFallback._handleFile(req, file, cb); }, _removeFile(r, f, cb) { cb(null); } };
+  const { HybridStorage } = require('../middlewares/upload');
+  const prevEnv = process.env.NODE_ENV; process.env.NODE_ENV = 'production';
+  const s = await serve(new HybridStorage(spy));
+  const r = await post(s); s.close();
+  // لا وثيقة إعدادات أصلاً ← نفس الرفض
+  reset(null);
+  const s2 = await serve(new HybridStorage(spy));
+  const r2 = await post(s2); s2.close();
+  // مفتاح «الرجوع لـ Cloudinary» مفعّل في اللوحة والجهاز لا يرد ← يبقى بلا أثر
+  reset({ enabled: true, baseUrl: 'http://127.0.0.1:1', apiKey: 'isk_abcdefghijk', cloudinaryFallback: true });
+  const s3 = await serve(new HybridStorage(spy));
+  const r3 = await post(s3); s3.close();
+  process.env.NODE_ENV = prevEnv; cloudinary.uploader.upload_stream = orig;
+  assert.equal(r.status, 503); assert.match(r.body.message, /لم تُرفع الصورة — سحابة الصور: غير مفعّلة — فعّلها من لوحة التحكم/);
+  assert.equal(r2.status, 503); assert.match(r2.body.message, /غير مفعّلة/);
+  assert.equal(r3.status, 503); assert.match(r3.body.message, /لا يرد/);
+  assert.equal(calls, 0, 'لا رفع إلى Cloudinary'); assert.equal(fbCalls, 0, 'لا مسار Cloudinary');
+  await wait(50);
+  assert.ok(!DOC.fallbacks, 'لا «رجوع» محسوب');
+});
+
+test('Cloudinary موقوف: الفيديو يُرفض برسالة واضحة (سحابة الصور للصور فقط)', async () => {
+  reset({ enabled: true, baseUrl: 'http://127.0.0.1:1', apiKey: 'isk_abcdefghijk' });
+  let fbCalls = 0;
+  const spy = { _handleFile(req, file, cb) { fbCalls++; fakeFallback._handleFile(req, file, cb); }, _removeFile(r, f, cb) { cb(null); } };
+  const { HybridStorage } = require('../middlewares/upload');
+  const prevEnv = process.env.NODE_ENV; process.env.NODE_ENV = 'production';
+  const s = await serve(new HybridStorage(spy));
+  const form = new FormData();
+  form.append('image', new Blob([Buffer.alloc(4000, 1)], { type: 'video/mp4' }), 'reel.mp4');
+  const res = await fetch(`http://127.0.0.1:${s.address().port}/api/products`, { method: 'POST', body: form });
+  const body = await res.json(); s.close(); process.env.NODE_ENV = prevEnv;
+  assert.equal(res.status, 400);
+  assert.match(body.message, /رفع الفيديو موقوف — Cloudinary متوقف/);
+  assert.equal(fbCalls, 0);
+  // وضع الطوارئ يعيد الفيديو لـ Cloudinary كما كان
+  await withCdn(async () => {
+    const s2 = await serve(new HybridStorage(spy));
+    const f2 = new FormData(); f2.append('image', new Blob([Buffer.alloc(4000, 1)], { type: 'video/mp4' }), 'reel.mp4');
+    const r2 = await fetch(`http://127.0.0.1:${s2.address().port}/api/products`, { method: 'POST', body: f2 });
+    s2.close(); assert.equal(r2.status, 200);
+  });
+  assert.equal(fbCalls, 1);
+});
+
+test('وضع الطوارئ CLOUDINARY_UPLOADS=on: غير مفعّلة ← Cloudinary كما كان تماماً', () => withCdn(async () => {
   reset({ enabled: false });
   const { HybridStorage } = require('../middlewares/upload');
   const s = await serve(new HybridStorage(fakeFallback));
   const r = await post(s);
   s.close();
   assert.equal(r.body.file.path, 'https://res.cloudinary.com/demo/image/upload/fallback.jpg');
-});
+}));
 
 test('مفعّلة ← الصنف يُحفظ برابط سحابة الصور (medium)، والإعدادات (large)', { skip: !LIVE }, async () => {
   reset({ enabled: true, baseUrl: IS_URL, apiKey: IS_KEY });
@@ -157,7 +212,7 @@ test('السحابة المحلية مختارة والجهاز لا يرد ← 
   assert.match(r2.body.message, /لم تُفعَّل بعد — لا يوجد جهاز صور متصل/);
 });
 
-test('الرجوع لـ Cloudinary مسموح صراحة ← نفس الصورة تُرفع لـ Cloudinary ويُسجَّل السبب', async () => {
+test('وضع الطوارئ + الرجوع لـ Cloudinary مسموح صراحة ← نفس الصورة تُرفع لـ Cloudinary ويُسجَّل السبب', () => withCdn(async () => {
   reset({ enabled: true, baseUrl: 'http://127.0.0.1:1', apiKey: 'isk_abcdefghijk', cloudinaryFallback: true });
   const cloudinary = require('../config/cloudinary');
   const orig = cloudinary.uploader.upload_stream;
@@ -174,16 +229,16 @@ test('الرجوع لـ Cloudinary مسموح صراحة ← نفس الصورة
   await wait(50);
   assert.equal(DOC.fallbacks, 1);
   assert.match(DOC.lastError, /لا يرد/);
-});
+}));
 
-test('لم تُختر السحابة المحلية أصلاً ← Cloudinary كما كان', async () => {
+test('وضع الطوارئ: لم تُختر السحابة المحلية أصلاً ← Cloudinary كما كان', () => withCdn(async () => {
   reset(null);
   const { HybridStorage } = require('../middlewares/upload');
   const s = await serve(new HybridStorage(fakeFallback));
   const r = await post(s); s.close();
   assert.equal(r.status, 200);
   assert.match(r.body.file.path, /cloudinary/);
-});
+}));
 
 /* ── النقل من Cloudinary ── */
 test('جمع روابط Cloudinary من أي حقل (والفيديو والروابط الأخرى لا تُلمس)', () => {

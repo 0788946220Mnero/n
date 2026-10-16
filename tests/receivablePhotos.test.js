@@ -14,7 +14,8 @@ const jwt = require('jsonwebtoken');
 require('./helpers/memoryDb').installAll();
 const M = (n) => require('mongoose').model(n);
 
-// Cloudinary وهمي (السحابة المحلية غير مختارة في هذا الاختبار ← المسار القديم كما هو)
+// Cloudinary موقوف افتراضياً؛ هنا يُشغَّل وضع الطوارئ ليُختبر مسار الفاتورة بلا جهاز صور (Cloudinary وهمي)
+process.env.CLOUDINARY_UPLOADS = 'on';
 const cloudinary = require('../config/cloudinary');
 let uploaded = 0;
 cloudinary.uploader.upload_stream = (opts, cb) => {
@@ -59,6 +60,18 @@ test('رفع صورة الفاتورة الأصلية: للمخوّلين فقط
   assert.match(r.body.photo.url, /^https:\/\/res\.cloudinary\.com\//, 'رابط الصورة المرفوعة');
   assert.equal(uploaded, jpegBytes().length);
   photo = { ...r.body.photo, width: 1200, height: 1600 };
+});
+
+test('Cloudinary موقوف وسحابة الصور غير مفعّلة ← صورة الفاتورة تُرفض بسبب واضح (لا تضيع بصمت)', async () => {
+  delete process.env.CLOUDINARY_UPLOADS;
+  const before = uploaded; uploaded = -1;
+  try {
+    const f = new FormData(); f.append('image', new Blob([jpegBytes()], { type: 'image/jpeg' }), 'invoice.jpg');
+    const r = await call('POST', '/api/receivables/photo', { token: tokens.cashier, form: f });
+    assert.equal(r.status, 503, JSON.stringify(r.body));
+    assert.match(r.body.message, /سحابة الصور: غير مفعّلة/);
+    assert.equal(uploaded, -1, 'لا شيء إلى Cloudinary');
+  } finally { process.env.CLOUDINARY_UPLOADS = 'on'; uploaded = before; }
 });
 
 let id;

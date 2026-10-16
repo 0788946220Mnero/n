@@ -38,7 +38,7 @@ async function pushAdmins(title, body) {
 
 async function view() {
   const d = await ImageCloud.findOne({ key: 'main' }).select('+apiKey +tunnelToken').lean();
-  if (!d) return { enabled: false, baseUrl: '', projectId: '', hasKey: false, migration: await migration.status() };
+  if (!d) return { enabled: false, baseUrl: '', projectId: '', hasKey: false, cloudinaryUploads: imageCloud.cloudinaryUploads(), migration: await migration.status() };
   return {
     enabled: !!d.enabled, wantEnabled: !d.enabled && !!d.wantEnabled, baseUrl: d.baseUrl || '', projectId: d.projectId || '',
     hasKey: !!d.apiKey, keyHint: d.apiKey ? `…${String(d.apiKey).slice(-4)}` : '',
@@ -48,6 +48,7 @@ async function view() {
     syncReady: !!d.syncSecret || (d.nodes || []).length > 0,
     hasTunnel: !!d.tunnelToken,
     cloudinaryFallback: !!d.cloudinaryFallback,
+    cloudinaryUploads: imageCloud.cloudinaryUploads(), // false = Cloudinary موقوف كلياً (مفتاح الرجوع بلا أثر)
     viaRelay: relay.isRelayUrl(d.baseUrl),
     relayDevices: relay.status(),
     nodes: nodesSvc.view(d.nodes || []),
@@ -75,7 +76,7 @@ const update = async (req, res) => {
   };
   // رابط محلي (127.0.0.1 / 192.168.x — من DiyarPOS بلا رابط عام) لا يصله الخادم أبداً ← النفق
   if (relay.isPrivateUrl(next.baseUrl)) next.baseUrl = '';
-  // بلا رابط خاص: الصور تمر عبر نفق خادم ديار (لا Cloudflare ولا إعداد)
+  // بلا رابط خاص: الصور تمر عبر نفق سيرفر ميرو السحابي (لا Cloudflare ولا إعداد)
   if (next.enabled && !next.baseUrl) next.baseUrl = relay.baseFor(req);
   if (next.baseUrl && !/^https?:\/\/[^\s/]+/i.test(next.baseUrl)) return res.status(400).json({ success: false, message: 'الرابط غير صالح — مثال: https://images.diyaralanbat.com' });
   if (next.apiKey && !KEY_RX.test(next.apiKey)) return res.status(400).json({ success: false, message: 'صيغة المفتاح غير صحيحة (يبدأ بـ isk_)' });
@@ -97,7 +98,7 @@ const update = async (req, res) => {
       if (!(cur && (cur.nodes || []).length) && !relay.isRelayUrl(next.baseUrl)) return res.status(400).json({ success: false, message: t.message, test: t });
       next.enabled = false;
       pending = relay.isRelayUrl(next.baseUrl)
-        ? `حُفظ — الصور تُعرض عبر خادم ديار، وتُفعَّل السحابة تلقائياً حين يتصل جهاز الكاشير ويرسل مفتاحه (خلال دقيقة) — ${t.message}`
+        ? `حُفظ — الصور تُعرض عبر سيرفر ميرو السحابي، وتُفعَّل السحابة تلقائياً حين يتصل جهاز الكاشير ويرسل مفتاحه (خلال دقيقة) — ${t.message}`
         : `حُفظ — يصل الرابط ورمز النفق لجهاز الكاشير خلال دقيقة، وتُفعَّل السحابة تلقائياً حين يرد (${t.message})`;
     }
   }
@@ -118,7 +119,7 @@ const update = async (req, res) => {
 };
 
 /**
- * الرابط العام (Cloudflare مثلاً) لا يرد والنفق عبر خادم ديار متصل ← نجرّب النفق؛ إن عمل يُستخدم بدله.
+ * الرابط العام (Cloudflare مثلاً) لا يرد والنفق عبر سيرفر ميرو السحابي متصل ← نجرّب النفق؛ إن عمل يُستخدم بدله.
  * (كان رابط عام ميت — مثل images.diyaralanbat.com بلا cloudflared — يمنع التفعيل للأبد والنفق شغّال.)
  */
 async function relayInstead(cfg, req) {
@@ -126,7 +127,7 @@ async function relayInstead(cfg, req) {
   const base = relay.baseFor(req);
   if (!base) return null;
   const t = await imageCloud.test({ ...cfg, baseUrl: base });
-  return t.ok ? { baseUrl: base, test: t, message: `الرابط ${cfg.baseUrl} لا يرد (لا نفق Cloudflare يعمل عليه) — فُعّلت السحابة عبر خادم ديار بدلاً منه` } : null;
+  return t.ok ? { baseUrl: base, test: t, message: `الرابط ${cfg.baseUrl} لا يرد (لا نفق Cloudflare يعمل عليه) — فُعّلت السحابة عبر سيرفر ميرو السحابي بدلاً منه` } : null;
 }
 
 /**
@@ -182,7 +183,7 @@ async function repairEnabled(cur, req) {
   if (!base) return;
   await ImageCloud.updateOne({ key: 'main' }, { $set: { baseUrl: base, lastError: '' } });
   imageCloud.invalidate();
-  realtime.broadcast('imagecloud.alert', { level: 'ok', message: '✓ سحابة الصور: الرابط المحلي استُبدل بنفق خادم ديار' });
+  realtime.broadcast('imagecloud.alert', { level: 'ok', message: '✓ سحابة الصور: الرابط المحلي استُبدل بنفق سيرفر ميرو السحابي' });
 }
 
 const test = async (req, res) => {
@@ -303,8 +304,8 @@ const nodeClaim = async (req, res) => {
     } else {
       Object.assign($set, { lastError: t.message, lastErrorAt: new Date() });
       link = relay.isRelayUrl(baseUrl)
-        ? { enabled: false, message: 'انضم الجهاز — الصور تمر عبر خادم ديار، وتُفعَّل السحابة تلقائياً حين يتصل النفق (خلال دقيقة)' }
-        : { enabled: false, message: `انضم الجهاز — الرابط العام لا يرد (${t.message})، فتُفعَّل السحابة عبر خادم ديار تلقائياً حين يتصل النفق (خلال دقيقة)` };
+        ? { enabled: false, message: 'انضم الجهاز — الصور تمر عبر سيرفر ميرو السحابي، وتُفعَّل السحابة تلقائياً حين يتصل النفق (خلال دقيقة)' }
+        : { enabled: false, message: `انضم الجهاز — الرابط العام لا يرد (${t.message})، فتُفعَّل السحابة عبر سيرفر ميرو السحابي تلقائياً حين يتصل النفق (خلال دقيقة)` };
     }
   }
   // أول جهاز: يُفعَّل تلقائياً حين يصل الخادم للرابط العام (بعد ضبط النفق من الهاتف)

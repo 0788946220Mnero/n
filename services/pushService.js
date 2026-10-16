@@ -175,7 +175,7 @@ const notifyNewOrder = async (order) => {
 const notifyCustomers = async ({ title, body, link = '', image = '' }) => {
   const fb = initFirebase();
   if (!fb) {
-    return { sent: 0, failed: 0, error: 'إشعارات FCM غير مفعّلة — اضبط متغيّرات Firebase في Railway' };
+    return { sent: 0, failed: 0, error: 'إشعارات FCM غير مفعّلة — اضبط متغيّرات Firebase في سيرفر ميرو السحابي' };
   }
 
   const PushSubscriber = require('../models/PushSubscriber');

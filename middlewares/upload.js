@@ -6,7 +6,10 @@ const imageCloud = require('../services/imageCloudService');
 
 /*
   ═══════════════════════════════════════════════════════════════
-  رفع الملفات إلى Cloudinary مباشرةً (بدل حفظها على قرص Railway المؤقت).
+  ⛔ Cloudinary موقوف: كل الصور تُرفع لسحابة الصور (ImageStorage على DiyarPOS) أو تُرفض بسبب واضح.
+     لا يُرفع شيء جديد إلى Cloudinary إلا إن ضُبط CLOUDINARY_UPLOADS=on (طوارئ). الوصف أدناه لذلك الوضع فقط.
+
+  رفع الملفات إلى Cloudinary مباشرةً (بدل حفظها على قرص السيرفر المؤقت).
 
   بعد الرفع، تُصبح خصائص req.file كالتالي (من multer-storage-cloudinary):
     • req.file.path     → رابط Cloudinary الكامل (secure_url) — هذا ما يُحفَظ في قاعدة البيانات
@@ -87,7 +90,13 @@ class HybridStorage {
   constructor(fallback) { this.fallback = fallback; }
 
   _handleFile(req, file, cb) {
-    if (isVideoFile(file)) return this.fallback._handleFile(req, file, cb);
+    if (isVideoFile(file)) {
+      // سحابة الصور للصور فقط، و Cloudinary موقوف ← لا مكان للفيديو الجديد (الفيديوهات الحالية تبقى تعمل)
+      if (!imageCloud.cloudinaryUploads()) {
+        return drain(file, () => cb(Object.assign(new Error('رفع الفيديو موقوف — Cloudinary متوقف وسحابة الصور تقبل الصور فقط. الفيديوهات الموجودة تبقى تعمل، ويمكنك رفع صورة بدلاً منه.'), { status: 400, statusCode: 400 })));
+      }
+      return this.fallback._handleFile(req, file, cb);
+    }
     imageCloud.activeConfig().catch(() => null).then((cfg) => {
       const pol = imageCloud.policy();
       if (!cfg) {

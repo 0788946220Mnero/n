@@ -3,7 +3,7 @@
   IMAGE-SERVER: تشخيص سحابة الصور خطوة بخطوة — «أين يفشل الاتصال بالضبط؟»
 
   يمر بنفس المسار الذي تمر به الصور فعلاً، ويقف عند أول خطوة فاشلة بسببها:
-    1) الإعداد       مفعّلة؟ أي رابط (نفق خادم ديار / رابط عام / محلي لا يُوصَل)؟ مفتاح؟
+    1) الإعداد       مفعّلة؟ أي رابط (نفق سيرفر ميرو السحابي / رابط عام / محلي لا يُوصَل)؟ مفتاح؟
     2) الوصول       النفق: هل جهاز متصل، وهل هو صاحب المفتاح؟ — الرابط العام: هل يرد؟
     3) الخدمة       /api/v1/health على جهاز الصور (الجهاز، القرص قابل للكتابة، المساحة)
     4) المفتاح      قراءة بالمفتاح (401 = مفتاح جهاز آخر أو أُبطل)
@@ -44,13 +44,13 @@ async function diagnose({ req } = {}) {
   const base = imageCloud.trimUrl((d && d.baseUrl) || '');
   const mode = !base ? 'none' : relay.isRelayUrl(base) ? 'relay' : relay.isPrivateUrl(base) ? 'private' : 'public';
   const cfg = { baseUrl: mode === 'none' || mode === 'private' ? relay.baseFor(req) : base, apiKey: (d && d.apiKey) || '', keyNodeId: (d && d.keyNodeId) || '' };
-  const modeText = { relay: 'عبر نفق خادم ديار', public: `رابط عام ${base}`, private: `رابط محلي ${base} — لا يصله الخادم من الإنترنت (يُستبدل بالنفق)`, none: 'لا رابط محفوظ (سيُستخدم النفق)' }[mode];
+  const modeText = { relay: 'عبر نفق سيرفر ميرو السحابي', public: `رابط عام ${base}`, private: `رابط محلي ${base} — لا يصله الخادم من الإنترنت (يُستبدل بالنفق)`, none: 'لا رابط محفوظ (سيُستخدم النفق)' }[mode];
   const state = !d ? 'لم تُضبط بعد' : d.enabled ? 'مفعّلة' : d.wantEnabled ? 'بانتظار التفعيل' : 'غير مفعّلة';
   const cfgOk = !!(d && cfg.apiKey);
   add('config', 'الإعداد', {
     ok: cfgOk,
     message: `${state} · ${modeText} · ${cfg.apiKey ? `المفتاح محفوظ (…${cfg.apiKey.slice(-4)})` : 'لا يوجد مفتاح رفع — يرسله جهاز الكاشير بعد الموافقة'}`
-      + ` · الرجوع لـ Cloudinary: ${d && d.cloudinaryFallback ? 'مسموح' : 'معطّل'}${d && d.lastError ? ` · آخر خطأ: ${d.lastError}` : ''}`,
+      + ` · Cloudinary: ${!imageCloud.cloudinaryUploads() ? 'موقوف' : d && d.cloudinaryFallback ? 'احتياط مسموح' : 'احتياط معطّل'}${d && d.lastError ? ` · آخر خطأ: ${d.lastError}` : ''}`,
   });
 
   // 2) الوصول
@@ -61,7 +61,7 @@ async function diagnose({ req } = {}) {
       return { ok: res.ok, message: res.ok ? `الرابط العام يرد (${res.status})` : `الرابط العام ردّ بـ ${res.status} — ليس خادم الصور` };
     });
     if (!r.ok && /fetch failed|ENOTFOUND|ECONNREFUSED|timeout|aborted/i.test(r.message || '')) {
-      r.message = `الرابط العام ${base} لا يرد (${r.message}) — لا نفق Cloudflare يعمل عليه؛ النفق عبر خادم ديار ${relay.connectedCount() ? 'متصل ويُستخدم تلقائياً' : 'غير متصل أيضاً'}`;
+      r.message = `الرابط العام ${base} لا يرد (${r.message}) — لا نفق Cloudflare يعمل عليه؛ النفق عبر سيرفر ميرو السحابي ${relay.connectedCount() ? 'متصل ويُستخدم تلقائياً' : 'غير متصل أيضاً'}`;
     }
     reachOk = add('reach', 'الوصول', r);
     if (!reachOk && relay.connectedCount()) { cfg.baseUrl = relay.baseFor(req); reachOk = true; }
@@ -132,7 +132,7 @@ async function diagnose({ req } = {}) {
     const { unique } = await Promise.race([require('./imageMigrationService').scan(),
       new Promise((_, rej) => setTimeout(() => rej(new Error('قاعدة البيانات لم ترد خلال 8 ثوانٍ')), 8000))]);
     const n = unique.size;
-    if (!n) return { ok: true, message: 'لا روابط Cloudinary — كل الصور على السحابة المحلية' };
+    if (!n) return { ok: true, message: 'لا روابط Cloudinary — كل الصور على السحابة المحلية (Cloudinary موقوف)' };
     const ready = d && d.enabled && up;
     return { ok: null, message: `${n} صورة ما زالت على Cloudinary — ${ready ? 'النقل ممكن الآن: «انقل كل الصور»' : 'النقل يحتاج سحابة مفعّلة تعمل (الخطوات أعلاه)'}` };
   }));
