@@ -109,14 +109,41 @@ app.use('/api/employees', require('./routes/employeeRoutes')); // الموظفو
 app.use('/api/center', require('./routes/centerRoutes')); // بيع سنتر: طلبات هاتفية + سجل الزبون + مراقبة الموظفين
 app.use('/api/live-report', require('./routes/liveReportRoutes')); // التقرير الحي على شاشة القفل (Web Push)
 app.use('/api/relay', require('./routes/relayRoutes')); // الرسول: أوامر المدير من هاتفه لجهاز الكاشير
+// IMAGE-SERVER: سجل تشخيص لطلبات سحابة الصور — الطريقة والمسار والرمز والمدة فقط (لا query ولا رؤوس ولا أجسام).
+// عرض الصور الناجح للزبائن لا يُسجَّل (كثير ولا يفيد)؛ كل فشل يُسجَّل.
+app.use('/api/image-cloud', (req, res, next) => {
+  const t0 = Date.now(); const p = req.path;
+  res.on('finish', () => {
+    const okMedia = p.startsWith('/relay/media/') && res.statusCode < 400;
+    if (!okMedia) console.log(`[image-cloud] ${req.method} ${p} -> ${res.statusCode} (${Date.now() - t0}ms)`);
+  });
+  next();
+});
 app.use('/api/image-cloud', require('./routes/imageCloudRoutes')); // سحابة الصور الخاصة (ImageStorage داخل DiyarPOS) — مدير النظام
 app.use('/api/loyalty', require('./routes/loyaltyRoutes')); // الولاء: محفظة الزبون، الكاشير، الإدارة، Apple Wallet Web Service
 
 // فحص صحة الخادم — يفيد أيضاً لاختبار CORS من المتصفح
-app.get('/api/health', (req, res) => {
+// RAILWAY / DUAL-CONNECTION: «الخادم يرد» لا يعني أن قاعدة البيانات تعمل — db تفحصها فعلاً (ping بمهلة ثانيتين).
+// الرد دائماً 200 (فحص Railway الصحي لا يعيد تشغيل الخادم بسبب انقطاع مؤقت في القاعدة)، و status يقول الحقيقة.
+const mongoose = require('mongoose');
+async function dbHealth() {
+  const t0 = Date.now();
+  if (mongoose.connection.readyState !== 1) return { state: 'down', message: 'غير متصل بقاعدة البيانات' };
+  try {
+    await Promise.race([
+      mongoose.connection.db.admin().ping(),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('مهلة')), 2000)),
+    ]);
+    return { state: 'up', ms: Date.now() - t0 };
+  } catch (e) { return { state: 'down', message: `قاعدة البيانات لا ترد (${e.message})` }; }
+}
+
+app.get('/api/health', async (req, res) => {
+  const db = await dbHealth();
   res.json({
-    status: 'ok',
-    message: 'الخادم يعمل بنجاح',
+    status: db.state === 'up' ? 'ok' : 'degraded',
+    db,
+    message: db.state === 'up' ? 'الخادم يعمل بنجاح' : 'الخادم يعمل لكن قاعدة البيانات لا ترد',
     origin: req.headers.origin || null,
     allowedOrigins,
     time: new Date().toISOString(),

@@ -59,7 +59,11 @@ function init() {
   return wss;
 }
 
-const handleUpgrade = (req, socket, head) => init().handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
+// IMAGE-SERVER / SECURITY: سجلات تشخيص النفق — المسار ونتيجة التحقق فقط، بلا أسرار ولا رؤوس
+const handleUpgrade = (req, socket, head) => {
+  console.log(`[image-relay] websocket upgrade: ${String(req.url || '').split('?')[0]}`);
+  return init().handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
+};
 
 function onConnection(ws) {
   ws.isAlive = true;
@@ -69,11 +73,16 @@ function onConnection(ws) {
 
   ws.on('message', async (data, isBinary) => {
     if (!node) {
-      if (isBinary) return ws.close(4002, 'hello first');
+      if (isBinary) { console.warn('[image-relay] rejected: binary hello'); return ws.close(4002, 'hello first'); }
       clearTimeout(helloTimer);
-      let m; try { m = JSON.parse(String(data)); } catch (_) { return ws.close(4002, 'bad hello'); }
-      node = await authenticate(m).catch(() => null);
-      if (!node) { ws.close(4003, 'unknown device'); return; }
+      let m; try { m = JSON.parse(String(data)); } catch (_) { console.warn('[image-relay] rejected: invalid hello JSON'); return ws.close(4002, 'bad hello'); }
+      node = await authenticate(m).catch((err) => { console.error('[image-relay] authentication lookup failed:', err.message); return null; });
+      if (!node) {
+        // جهاز غير منضم، أو سرّه لا يطابق (أُعيد تثبيته؟) ← يحتاج «موافقة» من اللوحة من جديد
+        console.warn(`[image-relay] rejected: unknown/unapproved device ${String((m && m.nodeId) || '').slice(0, 64)}`);
+        ws.close(4003, 'unknown device'); return;
+      }
+      console.log(`[image-relay] device connected: ${node.nodeId}`);
       const prev = nodes.get(node.nodeId);
       if (prev && prev.ws !== ws) { try { prev.ws.close(4000, 'replaced'); } catch (_) { /* */ } failAll(prev, 'أُعيد اتصال الجهاز'); }
       node = { ...node, ws, since: Date.now(), pending: new Map(), awaiting: null };
@@ -92,8 +101,8 @@ function onConnection(ws) {
     if (nodes.get(node.nodeId) === node) nodes.delete(node.nodeId);
     failAll(node, 'انقطع اتصال جهاز الصور');
   };
-  ws.on('close', gone);
-  ws.on('error', gone);
+  ws.on('close', (code) => { if (node) console.log(`[image-relay] device disconnected: ${node.nodeId} (code ${code})`); gone(); });
+  ws.on('error', (err) => { console.warn('[image-relay] websocket error:', err.message); gone(); });
 }
 
 /** الجهاز يثبت هويته: منضم للمزامنة، وبصمة سرّه تطابق المحفوظة. */

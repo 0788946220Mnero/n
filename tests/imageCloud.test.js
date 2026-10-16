@@ -499,3 +499,17 @@ test('أول جهاز: الرابط ورمز النفق من الهاتف ← ت
     assert.equal(DOC.enabled, false);
   } finally { realtime.broadcast = orig; srv.close(); }
 });
+
+test('التشخيص ضد ImageStorage حقيقية: رفع، medium، مصغّرة حقيقية، الأصل، حذف', { skip: !LIVE }, async () => {
+  const { diagnose } = require('../services/imageCloudDiagnose');
+  const mk = () => ({ find: () => ({ toArray: async () => [] }) });
+  ['Product', 'Category', 'Setting', 'Notification'].forEach((m) => { require(`../models/${m}`).collection = mk(); });
+  reset({ enabled: true, baseUrl: IS_URL, apiKey: IS_KEY });
+  const r = await diagnose({ req: { headers: { host: 'diyar.test' } } });
+  console.log(r.steps.map((s) => `${s.ok === true ? '✓' : s.ok === false ? '✗' : '·'} ${s.label}: ${s.message}`).join('\n'));
+  assert.equal(r.ok, true, r.summary);
+  for (const k of ['config', 'reach', 'health', 'key', 'upload', 'view', 'thumb', 'delete']) assert.equal(r.steps.find((s) => s.key === k).ok, true, k);
+  const id = (r.steps.find((s) => s.key === 'upload').message.match(/[0-9A-Z]{26}/) || [])[0];
+  const gone = await fetch(`${IS_URL}/media/${id}/medium`);
+  assert.equal(gone.status, 404, 'صورة الاختبار حُذفت فعلاً من ImageStorage');
+});

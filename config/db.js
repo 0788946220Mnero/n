@@ -21,14 +21,21 @@ const ensureAdminUser = async () => {
       }
       return;
     }
+    // SECURITY: لا حساب مدير بكلمة مرور معروفة (Admin@123) — قاعدة فارغة تحتاج ADMIN_PASSWORD صريحة.
+    // (الحساب الموجود على Railway لا يتأثر: هذا الفرع لقاعدة بلا أي مدير فقط)
+    const adminPassword = String(process.env.ADMIN_PASSWORD || '').trim();
+    if (adminPassword.length < 8) {
+      console.warn('⚠️ لم يُنشأ حساب المدير: ضع كلمة مرور قوية (8 أحرف على الأقل) في ADMIN_PASSWORD ثم أعد التشغيل.');
+      return;
+    }
     await User.create({
       name: process.env.ADMIN_NAME || 'مدير النظام',
       username,
-      password: process.env.ADMIN_PASSWORD || 'Admin@123',
+      password: adminPassword,
       phone: adminPhone,
       role: 'admin',
     });
-    console.log(`👤 تم إنشاء مستخدم الأدمن تلقائياً: ${username} / (كلمة المرور الافتراضية أو من ADMIN_PASSWORD)`);
+    console.log(`👤 تم إنشاء مستخدم الأدمن تلقائياً: ${username} (كلمة المرور من ADMIN_PASSWORD)`);
   } catch (e) {
     console.error('⚠️ تعذّر إنشاء مستخدم الأدمن التلقائي:', e.message);
   }

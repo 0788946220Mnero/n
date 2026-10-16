@@ -366,6 +366,12 @@ const nodeKey = async (req, res) => {
 /** عنوان اتصال الأجهزة بالنفق: wss://{هذا الخادم}/api/image-cloud/relay/ws */
 const relayWs = (req) => relay.baseFor(req).replace(/^http/, 'ws') + '/ws';
 
+/** IMAGE-SERVER: تشخيص خطوة بخطوة (مدير النظام) — أين يفشل الاتصال بالضبط، بلا أسرار. */
+const diagnose = async (req, res) => {
+  const out = await require('../services/imageCloudDiagnose').diagnose({ req });
+  res.json({ success: true, diagnosis: out });
+};
+
 const relayStatus = async (req, res) => res.json({ success: true, devices: relay.status(), cache: relay.cacheStats() });
 
-module.exports = wrapAll({ get, update, test, migrateStatus, migrateStart, nodeJoin, nodeHeartbeat, nodeRemove, nodeRequest, nodeDecide, nodeClaim, relayStatus, nodeKey });
+module.exports = wrapAll({ get, update, test, migrateStatus, migrateStart, nodeJoin, nodeHeartbeat, nodeRemove, nodeRequest, nodeDecide, nodeClaim, relayStatus, nodeKey, diagnose });

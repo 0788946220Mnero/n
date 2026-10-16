@@ -15,6 +15,7 @@ const admin = requirePermission('images:cloud'); // مدير النظام افت
 router.get('/', protect, admin, c.get);
 router.put('/', protect, admin, c.update);
 router.post('/test', protect, admin, c.test);
+router.post('/diagnose', protect, admin, c.diagnose);  // IMAGE-SERVER: تشخيص خطوة بخطوة
 router.get('/migrate', protect, admin, c.migrateStatus);
 router.post('/migrate', protect, admin, c.migrateStart);
 router.post('/nodes/join', protect, admin, c.nodeJoin);          // انضمام جهاز للمزامنة (مدير النظام)

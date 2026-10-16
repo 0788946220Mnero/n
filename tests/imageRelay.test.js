@@ -442,3 +442,58 @@ test('مفعّلة برابط عام توقف عن الرد ← تتحول لل�
   assert.equal(DOC.enabled, true);
   assert.equal(imageCloud.trimUrl('Https://Images.x.com/'), 'https://Images.x.com', '«Https» من الهاتف يُصحَّح');
 });
+
+/* ───────── التشخيص خطوة بخطوة ───────── */
+test('التشخيص عبر النفق: كل الخطوات بالترتيب، والمصغّرة، والأصل محمي، وصورة الاختبار تُحذف', async () => {
+  const { diagnose } = require('../services/imageCloudDiagnose');
+  relay.reset();
+  const mk = () => ({ find: () => ({ toArray: async () => [] }) });
+  ['Product', 'Category', 'Setting', 'Notification'].forEach((m) => { require(`../models/${m}`).collection = mk(); });
+  dev = await device('pos-relay-1', 'SECRET-R', { onReq: (m, b, reply) => {
+    const json = (st, o) => reply(st, { 'content-type': 'application/json' }, Buffer.from(JSON.stringify(o)));
+    if (m.path === '/api/v1/health') return json(200, { status: 'ok', node: 'pos-relay-1', storage: { writable: true } });
+    if (m.path.startsWith('/api/v1/images?')) return m.headers['x-api-key'] === 'isk_relaytestkey123' ? json(200, { items: [] }) : json(401, { error: { message: 'مفتاح خاطئ' } });
+    if (m.path === '/api/v1/images' && m.method === 'POST') return json(201, { id: '01DIAG' });
+    if (m.path === '/media/01DIAG/original') return json(403, { error: { message: 'محمي' } });
+    if (m.path.startsWith('/media/01DIAG/')) return reply(200, { 'content-type': 'image/webp' }, IMG);
+    if (m.method === 'DELETE') return reply(204, {}, null);
+    return reply(404, {}, null);
+  } });
+  DOC = { key: 'main', enabled: true, apiKey: 'isk_relaytestkey123', keyNodeId: 'pos-relay-1', baseUrl: `${base}/api/image-cloud/relay`, nodes: [] };
+  imageCloud.invalidate();
+  const r = await diagnose({ req: { headers: { host: new URL(base).host } } });
+  assert.equal(r.ok, true, r.summary);
+  assert.deepEqual(r.steps.map((s) => s.key), ['config', 'reach', 'health', 'key', 'upload', 'view', 'thumb', 'original', 'delete', 'cloudinary']);
+  assert.match(r.steps[0].message, /…y123/); assert.ok(!JSON.stringify(r).includes('isk_relaytestkey123'), 'المفتاح لا يظهر');
+  assert.match(r.steps.find((s) => s.key === 'thumb').message, /small\/thumb تُعرض/);
+  assert.match(r.steps.find((s) => s.key === 'original').message, /كما يجب/);
+  assert.ok(dev.seen.some((m) => m.method === 'DELETE' && m.path.includes('01DIAG')));
+  assert.match(r.steps.find((s) => s.key === 'cloudinary').message, /لا روابط Cloudinary/);
+
+  // مفتاح جهاز آخر: يقف عند «مفتاح الرفع» بالسبب، ولا رفع
+  DOC = { ...DOC, apiKey: 'isk_otherdevicekey1' }; imageCloud.invalidate();
+  const bad = await diagnose({ req: { headers: { host: new URL(base).host } } });
+  assert.equal(bad.ok, false);
+  assert.match(bad.summary, /يفشل عند «مفتاح الرفع»: المفتاح مرفوض \(401\)/);
+  assert.equal(bad.steps.find((s) => s.key === 'upload').ok, null, 'تُخطّى الرفع');
+
+  // لا جهاز متصل: يقف عند «الوصول»
+  relay.reset();
+  const off = await diagnose({ req: { headers: { host: new URL(base).host } } });
+  assert.match(off.summary, /يفشل عند «الوصول»: لا يوجد جهاز صور متصل/);
+});
+
+test('التشخيص برابط عام ميت (images… بلا cloudflared): يقول السبب ويكمل عبر النفق إن كان متصلاً', async () => {
+  const { diagnose } = require('../services/imageCloudDiagnose');
+  DOC = { key: 'main', enabled: false, wantEnabled: true, apiKey: 'isk_relaytestkey123', keyNodeId: 'pos-relay-1', baseUrl: 'https://images.diyar-dead.invalid',
+    nodes: [{ nodeId: 'pos-relay-1', name: 'CASHIER', proofHash: sha('SECRET-R') }] };
+  imageCloud.invalidate();
+  dev = await device('pos-relay-1', 'SECRET-R');
+  assert.equal(dev.ok, true);
+  const r = await diagnose({ req: { headers: { host: new URL(base).host } } });
+  const reach = r.steps.find((s) => s.key === 'reach');
+  assert.equal(reach.ok, false);
+  assert.match(reach.message, /لا يرد .*لا نفق Cloudflare يعمل عليه.*متصل ويُستخدم تلقائياً/);
+  assert.equal(r.steps.find((s) => s.key === 'health').ok, true, 'أكمل عبر النفق');
+  assert.equal(r.steps.find((s) => s.key === 'upload').ok, true);
+});

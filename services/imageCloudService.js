@@ -196,4 +196,4 @@ function folderFor(req) {
   return p.split(/[/?]/)[0] || 'misc';
 }
 
-module.exports = { activeConfig, invalidate, upload, remove, test, note, mediaUrl, getDoc, variantFor, folderFor, trimUrl, inactiveReason, policy, verifyMedia };
+module.exports = { activeConfig, invalidate, upload, remove, test, note, mediaUrl, getDoc, variantFor, folderFor, trimUrl, inactiveReason, policy, verifyMedia, _fetch: cfgFetch };
