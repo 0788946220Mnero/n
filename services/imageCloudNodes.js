@@ -63,6 +63,7 @@ async function join(user, body) {
   const node = {
     nodeId, name: String(body.name || '').slice(0, 60), machine: String(body.machine || '').slice(0, 60),
     lanUrl: cleanUrl(body.lanUrl), joinedBy: nameOf(user), lastSeen: new Date(), running: true,
+    kind: body.kind === 'server' ? 'server' : 'pos',
   };
   if (HEX64.test(String(body.proofHash || ''))) node.proofHash = String(body.proofHash);
   const nodes = d.nodes.filter((n) => n.nodeId !== nodeId);
@@ -187,6 +188,50 @@ async function proven(nodeId, proof) {
   return n && proof && sameHash(sha(proof), n.proofHash) ? n : null;
 }
 
+/* ═══ «خادم صور ديار» المستقل: رمز اقتران بدل حساب مستخدم ═══ */
+const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // بلا 0/O و1/I
+const CODE_TTL_MS = 30 * 60000;
+const normCode = (c) => String(c || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+
+/** مدير النظام يولّد رمزاً (8 خانات، 30 دقيقة، مرة واحدة). يُحفظ بصمته فقط. */
+async function createPairCode(user) {
+  const bytes = crypto.randomBytes(8);
+  const raw = [...bytes].map((b) => CODE_ALPHABET[b % CODE_ALPHABET.length]).join('');
+  const code = `${raw.slice(0, 4)}-${raw.slice(4)}`;
+  const now = Date.now();
+  const d = await ImageCloud.findOne({ key: 'main' }).select('+pairCodes').lean();
+  const keep = ((d && d.pairCodes) || []).filter((p) => new Date(p.expiresAt).getTime() > now).slice(-4);
+  const entry = { hash: sha(normCode(code)), expiresAt: new Date(now + CODE_TTL_MS), createdBy: nameOf(user), createdAt: new Date(now) };
+  await ImageCloud.updateOne({ key: 'main' }, { $set: { pairCodes: keep.concat(entry) } }, { upsert: true });
+  return { code, expiresAt: entry.expiresAt };
+}
+
+/**
+ * الخادم المستقل يقدّم الرمز مع بصمة سرّه: الرمز صحيح ← يُستهلك، ويُسجَّل طلب ربط «موافَق عليه» باسم من ولّد الرمز.
+ * بعدها يستلم الأسرار بـ claim (بسرّه) كأي جهاز — بلا حساب مستخدم.
+ */
+async function pair(body) {
+  const nodeId = String((body && body.nodeId) || '');
+  if (!ID_RX.test(nodeId)) throw Object.assign(new Error('معرّف الجهاز غير صالح'), { status: 400 });
+  const proofHash = String(body.proofHash || '').toLowerCase();
+  if (!HEX64.test(proofHash)) throw Object.assign(new Error('بصمة الجهاز غير صالحة'), { status: 400 });
+  const h = sha(normCode(body.code));
+  const now = Date.now();
+  const d = await ImageCloud.findOne({ key: 'main' }).select('+pairCodes').lean();
+  const codes = (d && d.pairCodes) || [];
+  const hit = codes.find((p) => sameHash(p.hash, h) && new Date(p.expiresAt).getTime() > now);
+  if (!hit) throw Object.assign(new Error('رمز الاقتران غير صحيح أو انتهت صلاحيته — ولّد رمزاً جديداً من لوحة التحكم ← الإعدادات ← سحابة الصور'), { status: 403 });
+  const left = codes.filter((p) => p !== hit && new Date(p.expiresAt).getTime() > now);
+  const all = ((d && d.requests) || []).filter((x) => x.nodeId !== nodeId);
+  const at = new Date();
+  const r = {
+    nodeId, proofHash, requestedBy: 'رمز اقتران', requestedAt: at, lastSeen: at, status: 'approved', approvedBy: hit.createdBy || '', approvedAt: at,
+    name: String(body.name || '').slice(0, 60), machine: String(body.machine || '').slice(0, 60), lanUrl: cleanUrl(body.lanUrl), publicUrl: cleanUrl(body.publicUrl),
+  };
+  await ImageCloud.updateOne({ key: 'main' }, { $set: { pairCodes: left, requests: all.concat(r).slice(-20) } }, { upsert: true });
+  return { status: 'approved', approvedBy: r.approvedBy };
+}
+
 /** الطلبات للعرض في اللوحة (المنتظرة والمرفوضة). */
 const requestsView = (requests) => (requests || []).filter((r) => r.status !== 'approved').map((r) => ({
   nodeId: r.nodeId, name: r.name, machine: r.machine, requestedBy: r.requestedBy, requestedAt: r.requestedAt,
@@ -202,7 +247,7 @@ async function remove(nodeId) {
 function view(nodes) {
   const now = Date.now();
   return (nodes || []).map((n) => ({
-    nodeId: n.nodeId, name: n.name, machine: n.machine, lanUrl: n.lanUrl, joinedAt: n.joinedAt, lastSeen: n.lastSeen,
+    nodeId: n.nodeId, name: n.name, machine: n.machine, lanUrl: n.lanUrl, joinedAt: n.joinedAt, lastSeen: n.lastSeen, kind: n.kind || 'pos',
     online: !!(n.lastSeen && now - new Date(n.lastSeen).getTime() < OFFLINE_MS), running: !!n.running,
     images: n.images || 0, missingFiles: n.missingFiles || 0,
     peers: (n.peers || []).map((p) => ({ nodeId: p.nodeId, connected: !!p.connected, pendingEvents: p.pendingEvents || 0 })),
@@ -210,4 +255,4 @@ function view(nodes) {
   }));
 }
 
-module.exports = { join, heartbeat, remove, view, issueOf, peersFor, request, decide, claim, requestsView, proven, sha, ID_RX };
+module.exports = { join, heartbeat, remove, view, issueOf, peersFor, request, decide, claim, requestsView, proven, sha, ID_RX, createPairCode, pair, normCode };

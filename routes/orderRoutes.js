@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { protect, authorize } = require('../middlewares/auth');
+const { protect, authorize, authorizeOr } = require('../middlewares/auth');
 const { printOrAdmin } = require('../middlewares/printOrAdmin');
 const {
   getOrders,
@@ -47,7 +47,7 @@ router.delete('/block/:phone', protect, authorize('admin', 'manager', 'cashier')
 
 // الجرد لكل مستخدم: الكاشير يُغلق جرده هو، والمدير يستطيع جرد المطعم كاملاً
 router.get('/shift-summary', protect, getShiftSummary);
-router.get('/shift-overview', protect, authorize('admin', 'manager'), getShiftOverview);
+router.get('/shift-overview', protect, authorizeOr(['admin', 'manager'], ['shifts:view']), getShiftOverview); // + مراقب البيانات
 router.post('/close-shift', protect, authorize('admin', 'manager', 'cashier'), closeShift);
 
 // الزبون: تتبع طلبه وسجل طلباته — قبل /:id

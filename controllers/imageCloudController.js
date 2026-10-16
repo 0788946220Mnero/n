@@ -218,8 +218,12 @@ const nodeJoin = async (req, res) => {
   try { res.json({ success: true, ...(await nodesSvc.join(req.user, req.body || {})) }); } catch (err) { fail(res, err); }
 };
 
-/** نبض جهاز منضم (أي مستخدم مسجّل على الجهاز): حالته ← الأجهزة الأخرى. */
+/** نبض جهاز منضم (أي مستخدم مسجّل على الجهاز، أو الجهاز نفسه بسرّه): حالته ← الأجهزة الأخرى. */
 const nodeHeartbeat = async (req, res) => {
+  // «خادم صور ديار» المستقل بلا حساب مستخدم: يثبت هويته بسرّه وإلا يُرفض
+  if (req.device && !(await nodesSvc.proven((req.body || {}).nodeId, (req.body || {}).proof))) {
+    return res.status(403).json({ success: false, message: 'هذا الجهاز غير معروف — اقترن من جديد برمز من لوحة التحكم' });
+  }
   try {
     const out = await nodesSvc.heartbeat(req.body || {}, realtime.broadcast);
     if (out.config) {
@@ -238,6 +242,23 @@ const nodeRemove = async (req, res) => {
   const cur = await ImageCloud.findOne({ key: 'main' }).lean();
   if (cur && cur.keyNodeId === id) { await ImageCloud.updateOne({ key: 'main' }, { $set: { keyNodeId: '' } }); imageCloud.invalidate(); }
   res.json({ success: true, cloud: await view() });
+};
+
+/** مدير النظام يولّد رمز اقتران لـ«خادم صور ديار» المستقل (30 دقيقة، مرة واحدة). */
+const pairCode = async (req, res) => {
+  const out = await nodesSvc.createPairCode(req.user);
+  res.json({ success: true, ...out });
+};
+
+/** «خادم صور ديار» يقدّم الرمز (بلا حساب) ← طلب ربط موافَق عليه، ثم يستلم بـ claim بسرّه. */
+const nodePair = async (req, res) => {
+  try {
+    const out = await nodesSvc.pair(req.body || {});
+    const who = String((req.body || {}).name || (req.body || {}).machine || (req.body || {}).nodeId || '');
+    realtime.broadcast('imagecloud.alert', { level: 'ok', message: `☁ خادم الصور ${who} اقترن برمز — يستلم الإعدادات ويبدأ المزامنة الآن` });
+    const cur = await ImageCloud.findOne({ key: 'main' }).select('+apiKey').lean();
+    res.json({ success: true, ...out, needKey: !(cur && cur.enabled && cur.apiKey) });
+  } catch (err) { fail(res, err); }
 };
 
 /** DiyarPOS يطلب الربط (أي حساب). مدير النظام على الجهاز نفسه = موافقة فورية. */
@@ -375,4 +396,4 @@ const diagnose = async (req, res) => {
 
 const relayStatus = async (req, res) => res.json({ success: true, devices: relay.status(), cache: relay.cacheStats() });
 
-module.exports = wrapAll({ get, update, test, migrateStatus, migrateStart, nodeJoin, nodeHeartbeat, nodeRemove, nodeRequest, nodeDecide, nodeClaim, relayStatus, nodeKey, diagnose });
+module.exports = wrapAll({ get, update, test, migrateStatus, migrateStart, nodeJoin, nodeHeartbeat, nodeRemove, nodeRequest, nodeDecide, nodeClaim, relayStatus, nodeKey, diagnose, pairCode, nodePair });

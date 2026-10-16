@@ -9,25 +9,27 @@
     • مصفوفة permissions فارغة للمستخدم  →  يرث صلاحيات دوره
     • مصفوفة غير فارغة                    →  صلاحيات مخصّصة تتجاوز الدور
     • دور admin                            →  كل الصلاحيات دائماً
+    • دور observer (مراقب بيانات)          →  صلاحيات «عرض» فقط (view: true) مهما مُنح،
+                                              والخادم يرفض أي تعديل منه (middlewares/auth.js)
   ═══════════════════════════════════════════════════════════════
 */
 
 const PERMISSIONS = [
-  { key: 'stats:view', label: 'عرض لوحة المعلومات والإحصائيات' },
-  { key: 'orders:view', label: 'عرض الطلبات' },
+  { key: 'stats:view', label: 'عرض لوحة المعلومات والإحصائيات', view: true },
+  { key: 'orders:view', label: 'عرض الطلبات والمبيعات', view: true },
   { key: 'orders:manage', label: 'تأكيد الطلبات وتغيير حالتها' },
   { key: 'orders:closeShift', label: 'إغلاق الجرد (تقرير الوردية)' },
-  { key: 'products:view', label: 'عرض الأصناف' },
+  { key: 'products:view', label: 'عرض الأصناف', view: true },
   { key: 'products:edit', label: 'إضافة وتعديل وحذف الأصناف' },
   { key: 'categories:edit', label: 'إدارة التصنيفات' },
-  { key: 'customers:view', label: 'عرض الزبائن' },
+  { key: 'customers:view', label: 'عرض الزبائن', view: true },
   { key: 'customers:manage', label: 'توثيق وتعديل بيانات الزبائن' },
   { key: 'printers:manage', label: 'إدارة الطابعات والطباعة' },
   { key: 'settings:manage', label: 'إعدادات المطعم والعروض' },
   { key: 'users:manage', label: 'إدارة المستخدمين والصلاحيات' },
   { key: 'delivery:manage', label: 'نظام التوصيل: الخريطة وتعيين المندوبين وسجل التوصيل' },
-  { key: 'activity:view', label: 'سجل نشاط المستخدمين' },
-  { key: 'shifts:view', label: 'سجل الجرد (كل الدورات)' },
+  { key: 'activity:view', label: 'سجل نشاط المستخدمين', view: true },
+  { key: 'shifts:view', label: 'سجل الجرد وقيمه (كل الدورات)', view: true },
   { key: 'delivery:mapManage', label: 'إدارة خريطة التوصيل: إزالة الطلبات العالقة من جرد سابق' },
   { key: 'receivables:manage', label: 'ذمم الموردين: تسجيل فواتير الموردين وتسديدها وطباعتها (الإزالة لمدير النظام فقط)' },
   { key: 'supplies:manage', label: 'قائمة البضائع المطلوبة للمطعم' },
@@ -41,16 +43,23 @@ const PERMISSIONS = [
   { key: 'images:cloud', label: 'سحابة الصور: ربط خادم الصور (DiyarPOS)، مفتاحه، ونقل الصور من Cloudinary' },
   { key: 'loyalty:use', label: 'الولاء عند البيع: البحث عن العضو برقمه أو بطاقته، رصيده، واستبدال المكافآت' },
   { key: 'loyalty:manage', label: 'إدارة الولاء: الأعضاء والتعديل اليدوي للنقاط، المكافآت، القواعد، وحالة بطاقات Apple/Google' },
+  // عرض فقط — لمراقب البيانات (ويُمنح لغيره): يرى ولا يعدّل
+  { key: 'capital:view', label: 'رأس المال: عرض الرصيد والحركات فقط (بلا إيداع ولا سحب)', view: true },
+  { key: 'receivables:view', label: 'ذمم الموردين: عرض الفواتير المخزّنة وصورها فقط', view: true },
+  { key: 'employees:view', label: 'الموظفون: عرض كشوف حساباتهم وسحوباتهم فقط', view: true },
+  { key: 'expenses:view', label: 'المصروفات وسندات الصرف: عرض فقط', view: true },
 ];
 
 const ALL_KEYS = PERMISSIONS.map((p) => p.key);
+const VIEW_KEYS = PERMISSIONS.filter((p) => p.view).map((p) => p.key);
+const READ_ONLY_ROLES = ['observer'];
 
 const ROLE_PERMISSIONS = {
   admin: [...ALL_KEYS],
   // رأس المال لمدير النظام وحده افتراضياً (يُمنح لغيره من «المستخدمون» عند الحاجة)
   // رأس المال وصرف الموظفين: لمدير النظام افتراضياً، ويُمنحان لغيره من «المستخدمون»
   // والأوامر الصوتية: لمدير النظام افتراضياً، ويمنحها لمن يريد
-  manager: ALL_KEYS.filter((k) => !['users:manage', 'capital:manage', 'employees:pay', 'voice:commands', 'stats:live', 'images:cloud'].includes(k)),
+  manager: ALL_KEYS.filter((k) => !['users:manage', 'capital:manage', 'capital:view', 'employees:pay', 'voice:commands', 'stats:live', 'images:cloud'].includes(k)),
   cashier: [
     'orders:view',
     'orders:manage',
@@ -70,6 +79,8 @@ const ROLE_PERMISSIONS = {
   // لا دفع ولا إلغاء ولا بيع سفري ولا قوائم الطلبات والزبائن (يفرضه الخادم أيضاً)
   center: ['center:sell'],
   delivery: [], // حساب محاسبي للمندوب — بلا دخول ولا صلاحيات
+  // مراقب بيانات: يرى المبيعات والإحصائيات والجرد ورأس المال وفواتير الموردين وسحوبات الموظفين — بلا أي تعديل
+  observer: ['stats:view', 'orders:view', 'shifts:view', 'capital:view', 'receivables:view', 'employees:view', 'expenses:view'],
 };
 
 // هل يستخدم المستخدم صلاحيات مخصّصة أم يرث صلاحيات دوره؟
@@ -80,8 +91,9 @@ const usesCustomPermissions = (user) =>
 const effectivePermissionsFor = (user) => {
   if (!user) return [];
   if (user.role === 'admin') return [...ALL_KEYS];
-  if (usesCustomPermissions(user)) return user.permissions.filter((p) => ALL_KEYS.includes(p));
-  return ROLE_PERMISSIONS[user.role] || [];
+  const list = usesCustomPermissions(user) ? user.permissions.filter((p) => ALL_KEYS.includes(p)) : (ROLE_PERMISSIONS[user.role] || []);
+  // مراقب البيانات: «عرض» فقط حتى لو مُنح غيرها بالخطأ
+  return READ_ONLY_ROLES.includes(user.role) ? list.filter((p) => VIEW_KEYS.includes(p)) : list;
 };
 
 // تنظيف مصفوفة قادمة من الواجهة: نقبل المفاتيح المعروفة فقط، بلا تكرار
@@ -102,6 +114,8 @@ const withPermissionFields = (user) => {
 module.exports = {
   PERMISSIONS,
   ALL_KEYS,
+  VIEW_KEYS,
+  READ_ONLY_ROLES,
   ROLE_PERMISSIONS,
   effectivePermissionsFor,
   usesCustomPermissions,

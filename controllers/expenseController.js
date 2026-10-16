@@ -4,6 +4,8 @@ const ExpenseSequence = require('../models/ExpenseSequence');
 
 const nameOf = (u) => (u && (u.name || u.username)) || '';
 const isManager = (u) => !!u && ['admin', 'manager'].includes(u.role);
+/** يرى مصروفات الجميع: المدير والمشرف، ومن يملك «المصروفات: عرض» (مراقب البيانات). */
+const seesAll = (u) => isManager(u) || require('../middlewares/permission').hasPermission(u, 'expenses:view');
 
 /** رقم سند تسلسلي ذرّي — لا يتكرر حتى مع تسجيلين في نفس اللحظة. */
 /** توقيع صالح: صورة PNG صغيرة (data URL) — لا نصوص ولا ملفات كبيرة. */
@@ -32,7 +34,7 @@ const getExpense = async (req, res) => {
   if (!e) return res.status(404).json({ message: 'السند غير موجود' });
   const { hasPermission } = require('../middlewares/permission');
   const employeeVoucher = !!e.employee && (hasPermission(req.user, 'employees:pay') || hasPermission(req.user, 'employees:manage'));
-  if (!isManager(req.user) && String(e.createdBy) !== String(req.user._id) && !employeeVoucher) {
+  if (!seesAll(req.user) && String(e.createdBy) !== String(req.user._id) && !employeeVoucher) {
     return res.status(403).json({ message: 'ليس لديك صلاحية' });
   }
   res.json({ success: true, expense: e });
@@ -150,7 +152,7 @@ const createExpense = async (req, res) => {
 // GET /api/expenses?scope=mine|all — مصروفات الجرد المفتوح
 const listExpenses = async (req, res) => {
   const filter = { closed: { $ne: true }, source: { $ne: 'capital' } }; // مصروفات الجرد (الصندوق) فقط
-  const all = req.query.scope === 'all' && isManager(req.user);
+  const all = req.query.scope === 'all' && seesAll(req.user);
   if (!all) filter.createdBy = req.user._id;
 
   const expenses = await Expense.find(filter).select('-approvedSignature').sort({ createdAt: -1 }).limit(200).lean();
@@ -195,7 +197,7 @@ const logExpenses = async (req, res) => {
   const page = Math.max(1, parseInt(req.query.page, 10) || 1);
   const limit = Math.min(200, Math.max(1, parseInt(req.query.limit, 10) || 50));
   const f = {};
-  if (!isManager(req.user)) f.createdBy = req.user._id;
+  if (!seesAll(req.user)) f.createdBy = req.user._id;
   else if (req.query.user && mongoose.Types.ObjectId.isValid(req.query.user)) f.createdBy = new mongoose.Types.ObjectId(req.query.user);
 
   const day = (s) => new Date(`${s}T00:00:00+03:00`);

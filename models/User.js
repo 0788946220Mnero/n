@@ -12,7 +12,8 @@ const userSchema = new mongoose.Schema(
       type: String,
       // delivery: مندوب توصيل مستقل — حساب محاسبي فقط، لا يدخل لوحة التحكم
       // center: موظف سنتر من المنزل — يرسل الطلبات للمطعم فقط (مسارات محصورة في الخادم)
-      enum: ['admin', 'manager', 'cashier', 'employee', 'delivery', 'center'],
+      // observer: مراقب بيانات — يرى ولا يعدّل (كل طلب غير GET يُرفض في middlewares/auth.js)
+      enum: ['admin', 'manager', 'cashier', 'employee', 'delivery', 'center', 'observer'],
       default: 'employee',
     },
     permissions: [{ type: String }], // مثال: ['products:edit', 'orders:view']

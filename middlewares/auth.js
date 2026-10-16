@@ -9,6 +9,16 @@ const centerAllowed = (req) => {
   return /^\/api\/(products|categories|settings)(\/|$)/.test(url);
 };
 
+/**
+ * مراقب البيانات: قراءة فقط. أي طلب يغيّر شيئاً يُرفض هنا مهما كانت الصلاحيات أو الواجهة —
+ * عدا حسابه نفسه (الخروج، تجديد الجلسة) وتسجيل جهازه للإشعارات.
+ */
+const observerAllowed = (req) => {
+  if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return true;
+  const url = String(req.originalUrl || '').split('?')[0];
+  return url.startsWith('/api/auth/') || /^\/api\/devices(\/|$)/.test(url);
+};
+
 // التحقق من وجود توكن صالح
 const protect = async (req, res, next) => {
   try {
@@ -47,6 +57,9 @@ const protect = async (req, res, next) => {
     if (user.role === 'center' && !centerAllowed(req)) {
       return res.status(403).json({ message: 'حساب موظف السنتر مخصّص لإرسال الطلبات فقط', code: 'CENTER_ONLY' });
     }
+    if (user.role === 'observer' && !observerAllowed(req)) {
+      return res.status(403).json({ message: 'حساب مراقب البيانات للعرض فقط — لا يمكنه التعديل', code: 'READ_ONLY' });
+    }
     next();
   } catch (error) {
     return res.status(401).json({ message: 'التوكن غير صالح أو منتهي الصلاحية' });
@@ -63,4 +76,13 @@ const authorize = (...roles) => {
   };
 };
 
-module.exports = { protect, authorize };
+/** دور من القائمة أو صلاحية من القائمة (لمسارات العرض التي كانت بالأدوار فقط). */
+const authorizeOr = (roles, perms) => (req, res, next) => {
+  const { effectivePermissionsFor } = require('../utils/permissions');
+  if (roles.includes(req.user.role)) return next();
+  const mine = effectivePermissionsFor(req.user);
+  if (perms.some((p) => mine.includes(p))) return next();
+  return res.status(403).json({ message: 'ليس لديك صلاحية للقيام بهذا الإجراء' });
+};
+
+module.exports = { protect, authorize, authorizeOr };

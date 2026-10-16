@@ -2,7 +2,8 @@ const express = require('express');
 const router = express.Router();
 const { audit } = require('../middlewares/activityLogger');
 
-const { protect, authorize } = require('../middlewares/auth');
+const { protect, authorize, authorizeOr } = require('../middlewares/auth');
+const canView = authorizeOr(['admin', 'manager', 'cashier'], ['expenses:view']); // + مراقب البيانات (عرض فقط)
 const { hasPermission } = require('../middlewares/permission');
 
 /* تسجيل مصروف: الكاشير فما فوق — أو صرف لموظف لمن يملك «صرف للموظفين» أيّاً كان دوره
@@ -21,9 +22,9 @@ router.post('/', protect, canCreateExpense, audit('expense.create', (req) => ({ 
 router.get('/signature', protect, getSignature);
 router.put('/signature', protect, setSignature);
 // سجل المصروف الكامل — قبل '/:id' وما شابه
-router.get('/log', protect, authorize('admin', 'manager', 'cashier'), logExpenses);
+router.get('/log', protect, canView, logExpenses);
 router.get('/:id', protect, getExpense);
-router.get('/', protect, authorize('admin', 'manager', 'cashier'), listExpenses);
+router.get('/', protect, canView, listExpenses);
 router.patch('/:id/void', protect, authorize('admin', 'manager', 'cashier'), voidExpense);
 
 module.exports = router;
