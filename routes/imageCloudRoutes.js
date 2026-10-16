@@ -6,7 +6,7 @@ const relay = require('../services/imageRelayService');
 const rateLimit = require('express-rate-limit');
 
 /**
- * «خادم صور ديار» المستقل لا يملك حساب مستخدم: يثبت هويته بسرّه (nodeId + proof في الجسم)
+ * «Mero Server» المستقل لا يملك حساب مستخدم: يثبت هويته بسرّه (nodeId + proof في الجسم)
  * والمتحكم يتحقق منه. مع رأس Authorization ← تحقق المستخدم المعتاد (DiyarPOS).
  */
 const userOrDevice = (req, res, next) => {
@@ -35,7 +35,7 @@ router.get('/migrate', protect, admin, c.migrateStatus);
 router.post('/migrate', protect, admin, c.migrateStart);
 router.post('/nodes/join', protect, admin, c.nodeJoin);          // انضمام جهاز للمزامنة (مدير النظام)
 router.post('/nodes/heartbeat', userOrDevice, c.nodeHeartbeat);  // نبض جهاز منضم (أي مستخدم على الجهاز، أو الخادم المستقل بسرّه)
-router.post('/pair-codes', protect, admin, c.pairCode);           // رمز اقتران «خادم صور ديار» المستقل
+router.post('/pair-codes', protect, admin, c.pairCode);           // رمز اقتران «Mero Server» المستقل
 router.post('/nodes/pair', pairLimiter, c.nodePair);              // الخادم المستقل يقدّم الرمز (بلا حساب)
 router.post('/nodes/request', protect, c.nodeRequest);            // DiyarPOS يطلب الربط (أي حساب)
 router.post('/nodes/claim', userOrDevice, c.nodeClaim);           // الجهاز المُوافَق عليه يستلم (يثبت هويته بسرّه)

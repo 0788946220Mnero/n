@@ -188,7 +188,7 @@ async function proven(nodeId, proof) {
   return n && proof && sameHash(sha(proof), n.proofHash) ? n : null;
 }
 
-/* ═══ «خادم صور ديار» المستقل: رمز اقتران بدل حساب مستخدم ═══ */
+/* ═══ «Mero Server» المستقل: رمز اقتران بدل حساب مستخدم ═══ */
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // بلا 0/O و1/I
 const CODE_TTL_MS = 30 * 60000;
 const normCode = (c) => String(c || '').toUpperCase().replace(/[^A-Z0-9]/g, '');

@@ -47,9 +47,9 @@ const imageCloudSchema = new mongoose.Schema(
       peers: [{ _id: false, nodeId: String, connected: Boolean, pendingEvents: Number, lastError: String }],
       issue: { type: String, default: '' },         // آخر مشكلة أُبلغ عنها (لإشعار مرة واحدة)
       proofHash: { type: String, default: '' },     // بصمة سر الجهاز — يثبت هويته في النبض
-      kind: { type: String, enum: ['pos', 'server'], default: 'pos' }, // server = «خادم صور ديار» المستقل (بلا بيع ولا طباعة)
+      kind: { type: String, enum: ['pos', 'server'], default: 'pos' }, // server = «Mero Server» المستقل (بلا بيع ولا طباعة)
     }],
-    // ═══ رموز اقتران «خادم صور ديار» المستقل: يولّدها مدير النظام، تُستعمل مرة واحدة خلال 30 دقيقة ═══
+    // ═══ رموز اقتران «Mero Server» المستقل: يولّدها مدير النظام، تُستعمل مرة واحدة خلال 30 دقيقة ═══
     pairCodes: {
       type: [{ _id: false, hash: String, expiresAt: Date, createdBy: String, createdAt: Date }],
       default: [],
