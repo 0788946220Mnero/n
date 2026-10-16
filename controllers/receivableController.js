@@ -24,6 +24,53 @@ const nextNumber = async () => {
 };
 
 // POST /api/receivables  { customerName (المورّد), phone, invoiceNumber, lines:[{name,quantity,price}], amount?, notes }
+/* ═════════ صور الفاتورة ═════════ */
+const MAX_PHOTOS = 4;
+const MAX_PRINT_BYTES = 450 * 1024; // نسخة الطباعة 548px أبيض/أسود — عادةً 30–150KB
+const PRINT_RX = /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/;
+
+/** يتحقق من الصور ونسخ الطباعة القادمة من اللوحة. يرجع { photos, printImages } أو يرمي 400. */
+function cleanPhotos(b, user) {
+  const fail = (m) => Object.assign(new Error(m), { statusCode: 400 });
+  const photos = (Array.isArray(b.photos) ? b.photos : []).map((p) => ({
+    url: String((p && p.url) || '').trim(),
+    storage: ['imagecloud', 'cloudinary'].includes(p && p.storage) ? p.storage : '',
+    fileId: String((p && p.fileId) || '').slice(0, 200),
+    width: Math.max(0, Math.round(Number(p && p.width) || 0)),
+    height: Math.max(0, Math.round(Number(p && p.height) || 0)),
+    addedByName: nameOf(user),
+  }));
+  // الرابط من رفعنا نحن فقط (https عبر الخادم/النفق أو Cloudinary) — لا روابط عشوائية
+  if (photos.some((p) => !/^https?:\/\/[^\s]+$/i.test(p.url) || p.url.length > 500)) throw fail('رابط صورة غير صالح');
+  const printImages = (Array.isArray(b.printImages) ? b.printImages : []).map(String);
+  for (const d of printImages) {
+    if (!PRINT_RX.test(d)) throw fail('نسخة الطباعة يجب أن تكون صورة');
+    if (d.length * 0.75 > MAX_PRINT_BYTES) throw fail('نسخة الطباعة كبيرة جداً');
+  }
+  return { photos, printImages };
+}
+
+// POST /api/receivables/photo  (multipart: image) — تُرفع الصورة الأصلية وتُعاد بياناتها لتُربط بالفاتورة
+const uploadPhoto = async (req, res) => {
+  if (!req.file) return res.status(400).json({ message: 'لم تُرفق صورة' });
+  res.status(201).json({ success: true, photo: { url: req.file.path, storage: req.file.storage === 'imagecloud' ? 'imagecloud' : 'cloudinary', fileId: req.file.filename || '' } });
+};
+
+// POST /api/receivables/:id/photos  { photos:[...], printImages:[...] } — إضافة صفحات لفاتورة موجودة
+const addPhotos = async (req, res) => {
+  if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(400).json({ message: 'معرّف غير صالح' });
+  const { photos, printImages } = cleanPhotos(req.body || {}, req.user);
+  if (!photos.length && !printImages.length) return res.status(400).json({ message: 'لا صور' });
+  const cur = await Receivable.findById(req.params.id).select('+printImages').lean();
+  if (!cur || cur.deleted) return res.status(404).json({ message: 'الفاتورة غير موجودة' });
+  if ((cur.photos || []).length + photos.length > MAX_PHOTOS || (cur.printImages || []).length + printImages.length > MAX_PHOTOS) {
+    return res.status(400).json({ message: `حتى ${MAX_PHOTOS} صور للفاتورة الواحدة` });
+  }
+  const r = await Receivable.findOneAndUpdate({ _id: cur._id }, { $push: { photos: { $each: photos }, printImages: { $each: printImages } } }, { new: true }).select('+printImages').lean();
+  logActivity({ req, action: 'receivable.photos', details: { number: r.number, added: photos.length } });
+  res.json({ success: true, receivable: r });
+};
+
 const createReceivable = async (req, res) => {
   const b = req.body || {};
   const customerName = String(b.customerName || '').trim();
@@ -35,6 +82,9 @@ const createReceivable = async (req, res) => {
   // المبلغ من الأسطر إن وُجدت، وإلا المُدخل مباشرة
   const amount = lines.length ? r3(lines.reduce((t, l) => t + l.quantity * l.price, 0)) : r3(b.amount);
   if (!(amount > 0)) return res.status(400).json({ message: 'أدخل أصناف الفاتورة بأسعارها، أو المبلغ' });
+  let pics;
+  try { pics = cleanPhotos(b, req.user); } catch (e) { return res.status(400).json({ message: e.message }); }
+  if (pics.photos.length > MAX_PHOTOS || pics.printImages.length > MAX_PHOTOS) return res.status(400).json({ message: `حتى ${MAX_PHOTOS} صور للفاتورة الواحدة` });
 
   const receivable = await Receivable.create({
     number: await nextNumber(),
@@ -44,11 +94,14 @@ const createReceivable = async (req, res) => {
     amount,
     notes: String(b.notes || '').trim().slice(0, 300),
     invoiceNumber: String(b.invoiceNumber || '').trim().slice(0, 40),
+    photos: pics.photos,
+    printImages: pics.printImages,
     createdBy: req.user._id,
     createdByName: nameOf(req.user),
   });
-  logActivity({ req, action: 'receivable.create', amount, details: { number: receivable.number, name: customerName } });
-  res.status(201).json({ success: true, receivable });
+  logActivity({ req, action: 'receivable.create', amount, details: { number: receivable.number, name: customerName, photos: pics.photos.length } });
+  // نسخ الطباعة تُعاد مع الإنشاء (للطباعة فوراً)، ولا تُرسل في القوائم
+  res.status(201).json({ success: true, receivable: { ...receivable.toObject(), printImages: pics.printImages } });
 };
 
 // GET /api/receivables?status=unpaid|paid&q=&from=&to=&deleted=1&page=&limit=
@@ -92,7 +145,7 @@ const listReceivables = async (req, res) => {
 
 const getReceivable = async (req, res) => {
   if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(400).json({ message: 'معرّف غير صالح' });
-  const r = await Receivable.findById(req.params.id).lean();
+  const r = await Receivable.findById(req.params.id).select('+printImages').lean();
   if (!r || (r.deleted && req.user.role !== 'admin')) return res.status(404).json({ message: 'الفاتورة غير موجودة' });
   res.json({ success: true, receivable: r });
 };
@@ -155,7 +208,7 @@ const payReceivable = async (req, res) => {
       collectionClosed: false,
     } },
     { new: true }
-  );
+  ).select('+printImages'); // تُطبع فوراً بختم «دُفع» مع صورة الفاتورة
   if (!r) return res.status(409).json({ message: 'الفاتورة مسدَّدة مسبقاً أو غير موجودة' });
 
   if (source === 'capital') {
@@ -214,4 +267,4 @@ const deleteReceivable = async (req, res) => {
   res.json({ success: true });
 };
 
-module.exports = wrapAll({ createReceivable, listReceivables, getReceivable, payReceivable, unpayReceivable, deleteReceivable, listDrawers });
+module.exports = wrapAll({ uploadPhoto, addPhotos, createReceivable, listReceivables, getReceivable, payReceivable, unpayReceivable, deleteReceivable, listDrawers });

@@ -17,6 +17,23 @@ const lineSchema = new mongoose.Schema(
   { _id: false }
 );
 
+// صور فاتورة المورّد الورقية (حتى 4 صفحات):
+//   photos       الأصل للعرض بجودة كاملة — على سحابة الصور (أو Cloudinary إن سُمح)، برابط غير قابل للتخمين
+//   printImages  نسخة الطباعة الحرارية: أبيض/أسود معالجة كالماسح (548px)، محفوظة مع الفاتورة نفسها
+//                فتُطبع بلا إنترنت وبلا تحميل — select:false فلا تُرسل في القوائم
+const photoSchema = new mongoose.Schema(
+  {
+    url: { type: String, required: true, trim: true, maxlength: 500 },
+    storage: { type: String, default: '' },     // imagecloud | cloudinary
+    fileId: { type: String, default: '' },      // معرّفها في التخزين (للحذف لاحقاً)
+    width: { type: Number, default: 0 },
+    height: { type: Number, default: 0 },
+    addedByName: { type: String, default: '' },
+    addedAt: { type: Date, default: Date.now },
+  },
+  { _id: false }
+);
+
 const receivableSchema = new mongoose.Schema(
   {
     number: { type: Number, index: true },
@@ -27,6 +44,8 @@ const receivableSchema = new mongoose.Schema(
     notes: { type: String, default: '', maxlength: 300 },
     orderNumber: { type: String, default: '' }, // (قديم) لا يُستخدم
     invoiceNumber: { type: String, default: '', trim: true, maxlength: 40 }, // رقم فاتورة المورّد
+    photos: { type: [photoSchema], default: [] },
+    printImages: { type: [String], default: [], select: false },
 
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
     createdByName: { type: String, default: '' },

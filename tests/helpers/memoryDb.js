@@ -119,9 +119,10 @@ function sortDocs(docs, sort) {
 }
 
 class Q {
-  constructor(exec) { this._exec = exec; this.o = { lean: false, sort: null, skip: 0, limit: 0 }; }
+  constructor(exec) { this._exec = exec; this.o = { lean: false, sort: null, skip: 0, limit: 0, plus: [] }; }
   lean() { this.o.lean = true; return this; }
-  select() { return this; }
+  // كما في Mongoose: حقول select:false لا تُعاد إلا بـ .select('+field')
+  select(spec) { if (typeof spec === 'string') spec.split(/\s+/).forEach((x) => { if (x.startsWith('+')) this.o.plus.push(x.slice(1)); }); return this; }
   populate() { return this; }
   session() { return this; }
   sort(s) { this.o.sort = s; return this; }
@@ -138,7 +139,9 @@ function install(Model) {
   for (const [fields, opts] of Model.schema.indexes()) if (opts && opts.unique) uniques.push(Object.keys(fields));
   Model.schema.eachPath((p, t) => { if (t.options && t.options.unique && !uniques.some((u) => u.length === 1 && u[0] === p)) uniques.push([p]); });
 
-  const out = (doc, lean) => (doc == null ? null : lean ? clone(doc) : Model.hydrate(clone(doc)));
+  const hidden = []; Model.schema.eachPath((p, t) => { if (t.options && t.options.select === false) hidden.push(p); });
+  const strip = (doc, plus = []) => { if (doc) hidden.forEach((p) => { if (!plus.includes(p)) delete doc[p]; }); return doc; };
+  const out = (doc, lean, plus) => (doc == null ? null : lean ? strip(clone(doc), plus) : Model.hydrate(strip(clone(doc), plus)));
   const checkUnique = (doc, selfId) => {
     for (const fields of uniques) {
       const key = fields.map((f) => JSON.stringify(norm(getPath(doc, f))));
@@ -179,9 +182,9 @@ function install(Model) {
     let r = sortDocs(all(filter), o.sort);
     if (o.skip) r = r.slice(o.skip);
     if (o.limit) r = r.slice(0, o.limit);
-    return r.map((d) => out(d, o.lean));
+    return r.map((d) => out(d, o.lean, o.plus));
   });
-  Model.findOne = (filter = {}) => new Q((o) => out(sortDocs(all(filter), o.sort)[0], o.lean));
+  Model.findOne = (filter = {}) => new Q((o) => out(sortDocs(all(filter), o.sort)[0], o.lean, o.plus));
   Model.findById = (id) => Model.findOne({ _id: id });
   Model.exists = async (filter) => { const d = all(filter)[0]; return d ? { _id: d._id } : null; };
   Model.countDocuments = (filter = {}) => new Q(() => all(filter).length);
@@ -213,11 +216,11 @@ function install(Model) {
       const base = upsertBase(filter);
       applyUpdate(base, update, true);
       const created = insert(base);
-      return opts.new || opts.returnDocument === 'after' ? out(created, o.lean) : null;
+      return opts.new || opts.returnDocument === 'after' ? out(created, o.lean, o.plus) : null;
     }
     const before = clone(doc);
     const after = updateDoc(doc, update);
-    return out(opts.new || opts.returnDocument === 'after' ? after : before, o.lean);
+    return out(opts.new || opts.returnDocument === 'after' ? after : before, o.lean, o.plus);
   });
   Model.findByIdAndUpdate = (id, update, opts) => Model.findOneAndUpdate({ _id: id }, update, opts);
   Model.updateOne = (filter, update, opts = {}) => new Q(() => {

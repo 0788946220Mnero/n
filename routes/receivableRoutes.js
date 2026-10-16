@@ -3,10 +3,14 @@ const router = express.Router();
 const { protect } = require('../middlewares/auth');
 const { requirePermission } = require('../middlewares/permission');
 const c = require('../controllers/receivableController');
+const upload = require('../middlewares/upload');
 
 const can = requirePermission('receivables:manage');
 router.get('/', protect, can, c.listReceivables);
 router.get('/drawers', protect, can, c.listDrawers); // قبل /:id
+// صورة فاتورة المورّد الأصلية ← سحابة الصور (مجلد receivables)، ثم تُربط بالفاتورة بـ photos
+router.post('/photo', protect, can, upload.single('image'), c.uploadPhoto);
+router.post('/:id/photos', protect, can, c.addPhotos);
 router.post('/', protect, can, c.createReceivable);
 router.get('/:id', protect, can, c.getReceivable);
 router.post('/:id/pay', protect, can, c.payReceivable);
