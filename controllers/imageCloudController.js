@@ -80,10 +80,16 @@ const update = async (req, res) => {
   if (next.baseUrl && !/^https?:\/\/[^\s/]+/i.test(next.baseUrl)) return res.status(400).json({ success: false, message: 'الرابط غير صالح — مثال: https://images.diyaralanbat.com' });
   if (next.apiKey && !KEY_RX.test(next.apiKey)) return res.status(400).json({ success: false, message: 'صيغة المفتاح غير صحيحة (يبدأ بـ isk_)' });
   let pending = '';
+  let notice = ''; // فُعّلت لكن بغير الرابط المرسَل (النفق بدل رابط عام لا يرد)
   if (next.enabled) {
     if (!next.baseUrl || !next.apiKey) return res.status(400).json({ success: false, message: 'الرابط والمفتاح مطلوبان للتفعيل' });
     // لا نفعّل سحابة لا ترد — وإلا رجعت كل الصور لـ Cloudinary بصمت
-    const t = await imageCloud.test({ ...next, keyNodeId: (typeof b.apiKey === 'string' && b.apiKey.trim()) ? String(b.nodeId || '') : (cur && cur.keyNodeId) || '' });
+    const keyNodeId = (typeof b.apiKey === 'string' && b.apiKey.trim()) ? String(b.nodeId || '') : (cur && cur.keyNodeId) || '';
+    let t = await imageCloud.test({ ...next, keyNodeId });
+    if (!t.ok) {
+      const alt = await relayInstead({ ...next, keyNodeId }, req);
+      if (alt) { next.baseUrl = alt.baseUrl; t = alt.test; notice = alt.message; }
+    }
     if (t.ok) next.nodeName = t.node || '';
     else if (!b.force) {
       // أجهزة منضمة: الرابط ورمز النفق يصلانها مع نبضها التالي ← تُفعَّل تلقائياً حين ترد
@@ -108,8 +114,20 @@ const update = async (req, res) => {
   if (next.enabled) { $set.lastOkAt = new Date(); $set.lastError = ''; }
   await ImageCloud.updateOne({ key: 'main' }, { $set }, { upsert: true });
   imageCloud.invalidate();
-  res.json({ success: true, cloud: await view(), ...(pending ? { pending: true, message: pending } : {}) });
+  res.json({ success: true, cloud: await view(), ...(pending ? { pending: true, message: pending } : notice ? { message: notice } : {}) });
 };
+
+/**
+ * الرابط العام (Cloudflare مثلاً) لا يرد والنفق عبر خادم ديار متصل ← نجرّب النفق؛ إن عمل يُستخدم بدله.
+ * (كان رابط عام ميت — مثل images.diyaralanbat.com بلا cloudflared — يمنع التفعيل للأبد والنفق شغّال.)
+ */
+async function relayInstead(cfg, req) {
+  if (!req || relay.isRelayUrl(cfg.baseUrl) || !relay.connectedCount() || !cfg.apiKey) return null;
+  const base = relay.baseFor(req);
+  if (!base) return null;
+  const t = await imageCloud.test({ ...cfg, baseUrl: base });
+  return t.ok ? { baseUrl: base, test: t, message: `الرابط ${cfg.baseUrl} لا يرد (لا نفق Cloudflare يعمل عليه) — فُعّلت السحابة عبر خادم ديار بدلاً منه` } : null;
+}
 
 /**
  * تفعيل تلقائي: المدير يريدها مفعّلة (أو وافق على أول جهاز) والجهاز لم يكن يرد على الرابط العام.
@@ -129,8 +147,14 @@ async function tryAutoEnable(req, force = false) {
   if (!cur.baseUrl) return;
   if (!force && cur.lastAutoTry && Date.now() - new Date(cur.lastAutoTry).getTime() < 20000) return;
   await ImageCloud.updateOne({ key: 'main' }, { $set: { lastAutoTry: new Date() } });
-  const t = await imageCloud.test(cur);
-  if (!t.ok) { await ImageCloud.updateOne({ key: 'main' }, { $set: { lastError: t.message, lastErrorAt: new Date() } }); return; }
+  let t = await imageCloud.test(cur);
+  if (!t.ok) {
+    const alt = await relayInstead(cur, req);
+    if (!alt) { await ImageCloud.updateOne({ key: 'main' }, { $set: { lastError: t.message, lastErrorAt: new Date() } }); return; }
+    await ImageCloud.updateOne({ key: 'main' }, { $set: { baseUrl: alt.baseUrl } });
+    realtime.broadcast('imagecloud.alert', { level: 'warn', message: `☁ ${alt.message}` });
+    cur = { ...cur, baseUrl: alt.baseUrl }; t = alt.test;
+  }
   await ImageCloud.updateOne({ key: 'main' }, { $set: { enabled: true, nodeName: t.node || '', lastOkAt: new Date(), lastError: '' } });
   imageCloud.invalidate();
   realtime.broadcast('imagecloud.alert', { level: 'ok', message: `✓ فُعّلت سحابة الصور تلقائياً — جهاز ${t.node || 'الكاشير'} يرد على ${cur.baseUrl}` });
@@ -141,6 +165,18 @@ async function tryAutoEnable(req, force = false) {
  * ← تتحول للنفق فوراً. (الإصلاح الذاتي كان يعمل قبل التفعيل فقط.)
  */
 async function repairEnabled(cur, req) {
+  // مفعّلة برابط عام فشل مؤخراً ← هل ما زال لا يرد؟ النفق بدله (مرة كل 20 ثانية على الأكثر)
+  if (cur.baseUrl && !relay.isRelayUrl(cur.baseUrl) && !relay.isPrivateUrl(cur.baseUrl) && cur.lastError && req && relay.connectedCount()
+    && !(cur.lastAutoTry && Date.now() - new Date(cur.lastAutoTry).getTime() < 20000)) {
+    await ImageCloud.updateOne({ key: 'main' }, { $set: { lastAutoTry: new Date() } });
+    if ((await imageCloud.test(cur)).ok) return;
+    const alt = await relayInstead(cur, req);
+    if (!alt) return;
+    await ImageCloud.updateOne({ key: 'main' }, { $set: { baseUrl: alt.baseUrl, nodeName: alt.test.node || '', lastOkAt: new Date(), lastError: '' } });
+    imageCloud.invalidate();
+    realtime.broadcast('imagecloud.alert', { level: 'warn', message: `☁ ${alt.message}` });
+    return;
+  }
   if (!relay.isPrivateUrl(cur.baseUrl) || !relay.connectedCount() || !req) return;
   const base = relay.baseFor(req);
   if (!base) return;
@@ -256,7 +292,11 @@ const nodeClaim = async (req, res) => {
   else if (!baseUrl) link = { enabled: false, message: 'انضم الجهاز للمزامنة — بقي الرابط العام (نفق Cloudflare) ليُفعَّل الرفع: ضعه من لوحة التحكم ← سحابة الصور' };
   else {
     const cfg = { baseUrl, projectId: $set.projectId || cur.projectId, apiKey: $set.apiKey || cur.apiKey, keyNodeId: $set.keyNodeId || cur.keyNodeId || '' };
-    const t = cfg.apiKey ? await imageCloud.test(cfg) : { ok: false, message: 'لا يوجد مفتاح رفع' };
+    let t = cfg.apiKey ? await imageCloud.test(cfg) : { ok: false, message: 'لا يوجد مفتاح رفع' };
+    if (!t.ok) {
+      const alt = await relayInstead(cfg, req);
+      if (alt) { $set.baseUrl = alt.baseUrl; t = alt.test; }
+    }
     if (t.ok) {
       Object.assign($set, { enabled: true, nodeName: t.node || '', lastOkAt: new Date(), lastError: '' });
       link = { enabled: true, message: 'فُعّلت سحابة الصور — الصور الجديدة تُرفع إليها الآن' };
@@ -264,7 +304,7 @@ const nodeClaim = async (req, res) => {
       Object.assign($set, { lastError: t.message, lastErrorAt: new Date() });
       link = relay.isRelayUrl(baseUrl)
         ? { enabled: false, message: 'انضم الجهاز — الصور تمر عبر خادم ديار، وتُفعَّل السحابة تلقائياً حين يتصل النفق (خلال دقيقة)' }
-        : { enabled: false, message: `انضم الجهاز، لكن الخادم لا يصل للرابط العام بعد — تُفعَّل تلقائياً حين يرد: ${t.message}` };
+        : { enabled: false, message: `انضم الجهاز — الرابط العام لا يرد (${t.message})، فتُفعَّل السحابة عبر خادم ديار تلقائياً حين يتصل النفق (خلال دقيقة)` };
     }
   }
   // أول جهاز: يُفعَّل تلقائياً حين يصل الخادم للرابط العام (بعد ضبط النفق من الهاتف)

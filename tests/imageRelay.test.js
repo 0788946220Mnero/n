@@ -405,3 +405,40 @@ test('النقل: صورة قُبل رفعها لكنها لا تُعرض ← ل
     assert.ok(dev.seen.some((m) => m.method === 'DELETE' && m.path.includes('01BROKEN')), 'النسخة المكسورة حُذفت من الجهاز');
   } finally { globalThis.fetch = realFetch; }
 });
+
+/* ───────── رابط عام ميت (Cloudflare بلا cloudflared) والنفق متصل — حالة شاشة DiyarPOS ───────── */
+test('رابط عام لا يرد (Https://images…) والنفق متصل ← تُفعَّل عبر خادم ديار بدل الانتظار للأبد', async () => {
+  relay.reset();
+  DOC = { key: 'main', enabled: false, wantEnabled: true, apiKey: 'isk_relaytestkey123', keyNodeId: 'pos-relay-1', projectId: 'diyar',
+    baseUrl: 'https://images.diyar-dead.invalid', lastError: 'جهاز الصور لا يرد على https://images.diyar-dead.invalid',
+    nodes: [{ nodeId: 'pos-relay-1', name: 'CASHIER', proofHash: sha('SECRET-R'), lastSeen: new Date().toISOString() }] };
+  imageCloud.invalidate();
+  dev = await device('pos-relay-1', 'SECRET-R');
+  await hbOf('pos-relay-1', 'SECRET-R');
+  for (let i = 0; i < 80 && !DOC.enabled; i++) await wait(25);
+  assert.equal(DOC.enabled, true, DOC.lastError);
+  assert.match(DOC.baseUrl, /\/api\/image-cloud\/relay$/, 'النفق بدل الرابط الميت');
+  assert.ok(sent.some((m) => /لا يرد .*فُعّلت السحابة عبر خادم ديار/.test(m.message || '')), 'إشعار بالسبب');
+
+  // «ربط بالخادم» من DiyarPOS بنفس الرابط الميت (كما في الصورة) ← يُفعَّل عبر النفق مع رسالة، لا «لم تُفعَّل بعد»
+  DOC = { ...DOC, enabled: false, baseUrl: '' };
+  imageCloud.invalidate();
+  const r = await fetch(base + '/api/image-cloud', { method: 'PUT', headers: { Authorization: 'Bearer ADMIN', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled: true, baseUrl: 'Https://images.diyar-dead.invalid', apiKey: 'isk_relaytestkey123', nodeId: 'pos-relay-1' }) });
+  const j = await r.json();
+  assert.equal(r.status, 200, j.message);
+  assert.equal(j.cloud.enabled, true);
+  assert.equal(j.cloud.viaRelay, true);
+  assert.ok(!j.pending);
+  assert.match(j.message, /لا يرد .*عبر خادم ديار/);
+});
+
+test('مفعّلة برابط عام توقف عن الرد ← تتحول للنفق مع النبض', async () => {
+  DOC = { ...DOC, enabled: true, baseUrl: 'https://images.diyar-dead.invalid', lastError: 'جهاز الصور لا يرد', lastAutoTry: null };
+  imageCloud.invalidate();
+  await hbOf('pos-relay-1', 'SECRET-R');
+  for (let i = 0; i < 80 && !/relay$/.test(DOC.baseUrl); i++) await wait(25);
+  assert.match(DOC.baseUrl, /\/api\/image-cloud\/relay$/);
+  assert.equal(DOC.enabled, true);
+  assert.equal(imageCloud.trimUrl('Https://Images.x.com/'), 'https://Images.x.com', '«Https» من الهاتف يُصحَّح');
+});

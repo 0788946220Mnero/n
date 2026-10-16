@@ -26,7 +26,8 @@ const TTL_MS = 15000;
 const UPLOAD_TIMEOUT_MS = Number(process.env.IMAGE_CLOUD_TIMEOUT_MS || 30000);
 let cache = null; let cacheAt = 0;
 
-const trimUrl = (u) => String(u || '').trim().replace(/\/+$/, '');
+// «Https://…» كما يُكتب على الهاتف ← https://… (والشرطة الأخيرة تُحذف)
+const trimUrl = (u) => String(u || '').trim().replace(/\/+$/, '').replace(/^https?:/i, (m) => m.toLowerCase());
 
 async function getDoc({ withKey = false } = {}) {
   let q = ImageCloud.findOne({ key: 'main' });
