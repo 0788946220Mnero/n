@@ -148,4 +148,4 @@ function start() {
   if (refreshT.unref) refreshT.unref();
 }
 
-module.exports = { enabled, publicKey, touch, sendNow, sendToUser, buildReport, formatReport, start, clock, _reset: () => { lastBody = ''; if (timer) clearTimeout(timer); timer = null; } };
+module.exports = { enabled, publicKey, webpush: () => wp(), touch, sendNow, sendToUser, buildReport, formatReport, start, clock, _reset: () => { lastBody = ''; if (timer) clearTimeout(timer); timer = null; } };

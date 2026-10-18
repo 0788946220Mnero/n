@@ -32,6 +32,8 @@ const logActivity = ({ req, user, action, order, before, after, details, amount 
       ip: req ? String(req.headers['x-forwarded-for'] || req.ip || '').split(',')[0].trim().slice(0, 64) : '',
     };
     ActivityLog.create(doc).catch((e) => console.error('activity log failed:', e.message));
+    // إشعارات الطاقم: الحركات التي اختارها مدير النظام (بيع، إلغاء، جرد، مصروف…) — لا تنتظر ولا ترمي
+    try { require('../services/staffAlertService').fromActivity(doc, order); } catch (e) { console.error('staff alert hook:', e.message); }
   } catch (e) {
     console.error('activity log failed:', e.message);
   }

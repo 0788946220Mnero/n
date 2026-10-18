@@ -70,6 +70,8 @@ const createJob = async (req, res) => {
   });
 
   try { realtime.emitPrintJob(job); } catch (_) {}
+  // إشعارات الطاقم: فتح الدرج يدوياً (بلا بيع) من جهاز بعيد
+  if (type === 'drawer') require('../services/staffAlertService').emit('drawer.open', { userId: req.user._id, userName: nameOf(req.user), role: req.user.role });
   res.status(201).json({ success: true, job });
 };
 

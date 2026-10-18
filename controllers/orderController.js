@@ -357,6 +357,8 @@ const createOrder = async (req, res) => {
     // بثّ فوري لتطبيق الإدارة + إشعار FCM (لا يعطّلان إنشاء الطلب إن فشلا)
     try { realtime.emitOrderCreated(order); } catch (e) { console.error('realtime emit failed:', e.message); }
     pushService.notifyNewOrder(order).catch((e) => console.error('push failed:', e.message));
+    // إشعارات الطاقم: طلب جديد من الموقع (لمن اختارهم مدير النظام)
+    require('../services/staffAlertService').emit('order.new', { userName: customerName, amount: order.total, orderNumber: order.orderNumber }, order);
 
     res.status(201).json({
       success: true, order, orderNumber,

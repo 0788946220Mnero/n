@@ -108,6 +108,7 @@ app.use('/api/capital', require('./routes/capitalRoutes')); // رأس المال
 app.use('/api/employees', require('./routes/employeeRoutes')); // الموظفون وصرفهم
 app.use('/api/center', require('./routes/centerRoutes')); // بيع سنتر: طلبات هاتفية + سجل الزبون + مراقبة الموظفين
 app.use('/api/live-report', require('./routes/liveReportRoutes')); // التقرير الحي على شاشة القفل (Web Push)
+app.use('/api/staff-alerts', require('./routes/staffAlertRoutes')); // إشعارات الطاقم: من مدير النظام وحركات المطعم لأجهزة الموظفين
 app.use('/api/relay', require('./routes/relayRoutes')); // الرسول: أوامر المدير من هاتفه لجهاز الكاشير
 // IMAGE-SERVER: سجل تشخيص لطلبات سحابة الصور — الطريقة والمسار والرمز والمدة فقط (لا query ولا رؤوس ولا أجسام).
 // عرض الصور الناجح للزبائن لا يُسجَّل (كثير ولا يفيد)؛ كل فشل يُسجَّل.

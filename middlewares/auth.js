@@ -16,7 +16,8 @@ const centerAllowed = (req) => {
 const observerAllowed = (req) => {
   if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return true;
   const url = String(req.originalUrl || '').split('?')[0];
-  return url.startsWith('/api/auth/') || /^\/api\/devices(\/|$)/.test(url);
+  // تفعيل/إيقاف الإشعارات على جهازه وتجربتها: ليست تعديلاً لبيانات المطعم
+  return url.startsWith('/api/auth/') || /^\/api\/devices(\/|$)/.test(url) || /^\/api\/staff-alerts\/(devices|test)(\/|$)/.test(url);
 };
 
 // التحقق من وجود توكن صالح
