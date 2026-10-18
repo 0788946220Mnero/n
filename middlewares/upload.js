@@ -68,7 +68,7 @@ const mediaStorage = new CloudinaryStorage({
    إن فعّل مدير النظام «سحابة الصور» (ImageStorage داخل DiyarPOS): الصورة تُجمع في الذاكرة
    (≤ 25MB) وتُرفع لجهاز المطعم، ويُحفظ رابطها العام في قاعدة البيانات كما كان رابط Cloudinary.
    إن لم يرد الجهاز (مطفأ/بلا إنترنت) تُرفع نفس الصورة لـ Cloudinary فلا يتوقف شيء.
-   الفيديو يبقى على Cloudinary دائماً (سحابة الصور للصور فقط). */
+   الفيديو (MP4/WebM ≤ 25MB) يُرفع لسحابة الصور أيضاً ويُعرض كما هو مع دعم التقديم (Range). */
 function cloudinaryFromBuffer(buf) {
   return new Promise((resolve, reject) => {
     const s = cloudinary.uploader.upload_stream(
@@ -78,6 +78,9 @@ function cloudinaryFromBuffer(buf) {
     s.end(buf);
   });
 }
+
+/** حد الفيديو على سحابة الصور: حد الملف في ImageStorage (25MB) وتحت حد رسالة النفق (32MB). */
+const VIDEO_CLOUD_MAX = 25 * 1024 * 1024;
 
 /** رفض الرفع بسبب واضح (يعرضه errorHandler عبر statusCode) — لا رجوع صامت لـ Cloudinary. */
 function refused(reason) {
@@ -90,14 +93,14 @@ class HybridStorage {
   constructor(fallback) { this.fallback = fallback; }
 
   _handleFile(req, file, cb) {
-    if (isVideoFile(file)) {
-      // سحابة الصور للصور فقط، و Cloudinary موقوف ← لا مكان للفيديو الجديد (الفيديوهات الحالية تبقى تعمل)
-      if (!imageCloud.cloudinaryUploads()) {
-        return drain(file, () => cb(Object.assign(new Error('رفع الفيديو موقوف — Cloudinary متوقف وسحابة الصور تقبل الصور فقط. الفيديوهات الموجودة تبقى تعمل، ويمكنك رفع صورة بدلاً منه.'), { status: 400, statusCode: 400 })));
-      }
-      return this.fallback._handleFile(req, file, cb);
-    }
+    const video = isVideoFile(file);
     imageCloud.activeConfig().catch(() => null).then((cfg) => {
+      if (video && !cfg) {
+        // الفيديو: سحابة الصور أولاً (MP4/WebM حتى 25 ميغابايت). Cloudinary فقط إن شُغّل للطوارئ.
+        if (imageCloud.cloudinaryUploads()) return this.fallback._handleFile(req, file, cb);
+        const why = imageCloud.policy().reason || 'سحابة الصور غير جاهزة';
+        return drain(file, () => cb(Object.assign(new Error(`لم يُرفع الفيديو — ${why}. شغّل DiyarPOS أو Mero Server ثم أعد المحاولة.`), { status: 503, statusCode: 503 })));
+      }
       const pol = imageCloud.policy();
       if (!cfg) {
         // السحابة المحلية مختارة: لا Cloudinary — الصورة لم تُرفع، والسبب يصل للوحة كما هو
@@ -114,13 +117,16 @@ class HybridStorage {
       file.stream.on('error', cb);
       file.stream.on('end', async () => {
         const buf = Buffer.concat(chunks);
+        if (video && buf.length > VIDEO_CLOUD_MAX) {
+          return cb(Object.assign(new Error(`الفيديو ${(buf.length / 1048576).toFixed(1)} ميغابايت — الحد 25 ميغابايت. قصّره أو صدّره بدقة 720p ثم ارفعه.`), { status: 400, statusCode: 400 }));
+        }
         try {
           const r = await imageCloud.upload(buf, {
             cfg, filename: file.originalname, mime: file.mimetype,
-            folder: imageCloud.folderFor(req), variant: imageCloud.variantFor(req),
+            folder: imageCloud.folderFor(req), variant: video ? 'large' : imageCloud.variantFor(req),
           });
-          // النجاح = الصورة تُعرض من رابطها (لا يكفي أن الجهاز قبل الملف)
-          const v = await imageCloud.verifyMedia(cfg, r.id, imageCloud.variantFor(req));
+          // النجاح = الملف يُعرض من رابطه (لا يكفي أن الجهاز قبله)
+          const v = await imageCloud.verifyMedia(cfg, r.id, video ? 'large' : imageCloud.variantFor(req), { video });
           if (!v.ok) { imageCloud.remove(r.id, cfg).catch(() => {}); throw Object.assign(new Error(v.message), { status: 0 }); }
           imageCloud.note(true, null, { upload: true });
           cb(null, { path: r.url, filename: r.id, size: buf.length, storage: 'imagecloud' });
@@ -129,6 +135,7 @@ class HybridStorage {
           if ([413, 415, 422].includes(err.status)) return cb(Object.assign(new Error(err.message), { status: 400, statusCode: 400 }));
           if (pol.localOnly) { imageCloud.note(false, err); return cb(refused(err.message)); }
           imageCloud.note(false, err, { fallback: true });
+          if (video) return cb(refused(err.message)); // لا رجوع لـ Cloudinary للفيديو من الذاكرة
           try {
             const r = await cloudinaryFromBuffer(buf);
             cb(null, { path: r.secure_url, filename: r.public_id, size: buf.length, storage: 'cloudinary' });

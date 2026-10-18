@@ -259,13 +259,84 @@ const addMenuBanner = async (req, res) => {
 
     const settings = await getOrCreateSettings();
     const maxOrder = (settings.menuBanners || []).reduce((max, b) => Math.max(max, b.order || 0), -1);
-    settings.menuBanners.push({ url: req.file.path, order: maxOrder + 1 });
+    settings.menuBanners.push({ url: req.file.path, order: maxOrder + 1, type: isVideoUpload(req.file) ? 'video' : 'image' });
 
     await settings.save();
     res.json({ success: true, menuBanners: settings.menuBanners });
   } catch (err) {
     res.status(500).json({ success: false, message: 'تعذر رفع البانر', error: err.message });
   }
+};
+
+const wrapDisplay = (fn) => (req, res) => fn(req, res).catch((err) => res.status(500).json({ success: false, message: 'تعذر حفظ إعدادات شاشة العميل', error: err.message }));
+const isVideoUpload = (f) => /^video\//i.test((f && f.mimetype) || '') || /\.(mp4|webm|mov|m4v)$/i.test((f && f.originalname) || '');
+
+/* ═══════════════════════════════════════════
+   شاشة العميل — إعلانات صور وفيديو على الشاشة الثانية للكاشير
+═══════════════════════════════════════════ */
+const displayView = (s) => {
+  const d = (s && s.customerDisplay) || {};
+  const ads = [...(d.ads || [])].sort((a, b) => (a.order || 0) - (b.order || 0));
+  return {
+    ads, showOrder: d.showOrder !== false, includeMenuBanners: d.includeMenuBanners !== false,
+    imageSeconds: d.imageSeconds || 8, welcomeText: d.welcomeText || '',
+    menuBanners: d.includeMenuBanners === false ? [] : [...((s && s.menuBanners) || [])].sort((a, b) => (a.order || 0) - (b.order || 0)),
+    restaurantName: (s && s.restaurantName) || '', logo: (s && s.logo) || '',
+  };
+};
+
+// GET /api/settings/customer-display — عام: الإعلانات علنية أصلاً، وشاشة العميل تعمل بلا تسجيل دخول
+const getCustomerDisplay = async (req, res) => {
+  const settings = await getOrCreateSettings();
+  res.set('Cache-Control', 'no-store');
+  res.json({ success: true, display: displayView(settings) });
+};
+
+// PUT /api/settings/customer-display — الخيارات
+const updateCustomerDisplay = async (req, res) => {
+  const settings = await getOrCreateSettings();
+  const b = req.body || {};
+  const d = settings.customerDisplay || (settings.customerDisplay = {});
+  if (typeof b.showOrder === 'boolean') d.showOrder = b.showOrder;
+  if (typeof b.includeMenuBanners === 'boolean') d.includeMenuBanners = b.includeMenuBanners;
+  if (b.imageSeconds != null) {
+    const n = Number(b.imageSeconds);
+    if (!Number.isFinite(n) || n < 3 || n > 60) return res.status(400).json({ success: false, message: 'مدة الصورة بين 3 و60 ثانية' });
+    d.imageSeconds = Math.round(n);
+  }
+  if (typeof b.welcomeText === 'string') d.welcomeText = b.welcomeText.trim().slice(0, 120);
+  if (Array.isArray(b.order)) {
+    const pos = new Map(b.order.map((id, i) => [String(id), i]));
+    (d.ads || []).forEach((a) => { if (pos.has(String(a._id))) a.order = pos.get(String(a._id)); });
+  }
+  settings.markModified('customerDisplay');
+  await settings.save();
+  res.json({ success: true, display: displayView(settings) });
+};
+
+// POST /api/settings/customer-display/ads — إعلان جديد (صورة أو فيديو)
+const addDisplayAd = async (req, res) => {
+  if (!req.file) return res.status(400).json({ success: false, message: 'لم يتم إرفاق صورة أو فيديو' });
+  const settings = await getOrCreateSettings();
+  const d = settings.customerDisplay || (settings.customerDisplay = {});
+  d.ads = d.ads || [];
+  const maxOrder = d.ads.reduce((m, a) => Math.max(m, a.order || 0), -1);
+  d.ads.push({ url: req.file.path, type: isVideoUpload(req.file) ? 'video' : 'image', order: maxOrder + 1 });
+  settings.markModified('customerDisplay');
+  await settings.save();
+  res.json({ success: true, display: displayView(settings) });
+};
+
+// DELETE /api/settings/customer-display/ads/:adId
+const deleteDisplayAd = async (req, res) => {
+  const settings = await getOrCreateSettings();
+  const d = settings.customerDisplay || {};
+  const before = (d.ads || []).length;
+  d.ads = (d.ads || []).filter((a) => String(a._id) !== String(req.params.adId));
+  if (d.ads.length === before) return res.status(404).json({ success: false, message: 'الإعلان غير موجود' });
+  settings.markModified('customerDisplay');
+  await settings.save();
+  res.json({ success: true, display: displayView(settings) });
 };
 
 // DELETE /api/settings/menu-banners/:bannerId — حذف بانر من المينيو
@@ -510,4 +581,8 @@ module.exports = wrapAll({
   setMainGalleryImage,
   addMenuBanner,
   deleteMenuBanner,
+  getCustomerDisplay: wrapDisplay(getCustomerDisplay),
+  updateCustomerDisplay: wrapDisplay(updateCustomerDisplay),
+  addDisplayAd: wrapDisplay(addDisplayAd),
+  deleteDisplayAd: wrapDisplay(deleteDisplayAd),
 });

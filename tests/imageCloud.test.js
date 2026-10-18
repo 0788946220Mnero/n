@@ -137,7 +137,7 @@ test('Cloudinary موقوف (الافتراضي): سحابة غير مفعّلة
   assert.ok(!DOC.fallbacks, 'لا «رجوع» محسوب');
 });
 
-test('Cloudinary موقوف: الفيديو يُرفض برسالة واضحة (سحابة الصور للصور فقط)', async () => {
+test('الفيديو لسحابة الصور: جهاز لا يرد ← رفض بسبب واضح، ولا شيء لـ Cloudinary', async () => {
   reset({ enabled: true, baseUrl: 'http://127.0.0.1:1', apiKey: 'isk_abcdefghijk' });
   let fbCalls = 0;
   const spy = { _handleFile(req, file, cb) { fbCalls++; fakeFallback._handleFile(req, file, cb); }, _removeFile(r, f, cb) { cb(null); } };
@@ -148,10 +148,17 @@ test('Cloudinary موقوف: الفيديو يُرفض برسالة واضحة (
   form.append('image', new Blob([Buffer.alloc(4000, 1)], { type: 'video/mp4' }), 'reel.mp4');
   const res = await fetch(`http://127.0.0.1:${s.address().port}/api/products`, { method: 'POST', body: form });
   const body = await res.json(); s.close(); process.env.NODE_ENV = prevEnv;
-  assert.equal(res.status, 400);
-  assert.match(body.message, /رفع الفيديو موقوف — Cloudinary متوقف/);
-  assert.equal(fbCalls, 0);
-  // وضع الطوارئ يعيد الفيديو لـ Cloudinary كما كان
+  assert.equal(res.status, 503);
+  assert.match(body.message, /لم تُرفع الصورة — سحابة الصور: .*لا يرد/);
+  assert.equal(fbCalls, 0, 'لا Cloudinary للفيديو');
+  // غير مفعّلة و Cloudinary موقوف ← رفض بسبب واضح
+  reset({ enabled: false });
+  const s3 = await serve(new HybridStorage(spy));
+  const f3 = new FormData(); f3.append('image', new Blob([Buffer.alloc(4000, 1)], { type: 'video/mp4' }), 'reel.mp4');
+  const r3 = await fetch(`http://127.0.0.1:${s3.address().port}/api/products`, { method: 'POST', body: f3 });
+  const b3 = await r3.json(); s3.close();
+  assert.equal(r3.status, 503); assert.match(b3.message, /لم يُرفع الفيديو — .*غير مفعّلة/);
+  // وضع الطوارئ (السحابة غير مفعّلة) يعيد الفيديو لـ Cloudinary كما كان
   await withCdn(async () => {
     const s2 = await serve(new HybridStorage(spy));
     const f2 = new FormData(); f2.append('image', new Blob([Buffer.alloc(4000, 1)], { type: 'video/mp4' }), 'reel.mp4');

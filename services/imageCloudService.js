@@ -18,8 +18,9 @@ const relay = require('./imageRelayService');
  * نفق سيرفر ميرو السحابي (/api/image-cloud/relay) — عبر اتصال الجهاز داخل هذا الخادم بلا خروج للإنترنت.
  */
 function cfgFetch(cfg, path, init = {}) {
-  if (relay.isRelayUrl(cfg.baseUrl)) { const { signal, ...rest } = init; return relay.relayFetch(path, rest, cfg.keyNodeId); }
-  return fetch(`${cfg.baseUrl}${path}`, init);
+  const { timeoutMs, ...plain } = init;
+  if (relay.isRelayUrl(cfg.baseUrl)) { const { signal, ...rest } = plain; return relay.relayFetch(path, { ...rest, timeoutMs }, cfg.keyNodeId); }
+  return fetch(`${cfg.baseUrl}${path}`, plain);
 }
 
 const TTL_MS = 15000;
@@ -81,21 +82,24 @@ function cloudinaryUploads() {
  * تتأكد أن الصورة تُعرض فعلاً من رابطها العام (كما يراها الزبون) — لا يكفي أن الرفع قُبل.
  * عبر النفق: نفس مسار العرض العام (كل الأجهزة المتصلة). نسخة قيد التجهيز (503/404) ← انتظار وإعادة.
  */
-async function verifyMedia(cfg, id, variant = 'large', { tries = 4, waitMs = 1500 } = {}) {
+async function verifyMedia(cfg, id, variant = 'large', { tries = 4, waitMs = 1500, video = false } = {}) {
   const path = `/media/${encodeURIComponent(id)}/${variant}`;
+  // الفيديو: أول كيلوبايت فقط (Range) — لا داعي لسحب الملف كاملاً عبر النفق للتحقق
+  const headers = video ? { accept: 'video/*', range: 'bytes=0-1023' } : { accept: 'image/*' };
+  const want = video ? /^video\//i : /^image\//i;
   let last = '';
   for (let i = 0; i < tries; i++) {
     try {
       let status; let type; let size;
       if (relay.isRelayUrl(cfg.baseUrl)) {
-        const r = await relay.request('GET', path, { headers: { accept: 'image/*' }, tryAllOn404: true, prefer: cfg.keyNodeId });
+        const r = await relay.request('GET', path, { headers, tryAllOn404: true, prefer: cfg.keyNodeId });
         status = r.status; type = String((r.headers || {})['content-type'] || (r.headers || {})['Content-Type'] || ''); size = r.body.length;
       } else {
-        const r = await fetch(`${cfg.baseUrl}${path}`, { headers: { accept: 'image/*' }, signal: AbortSignal.timeout(15000) });
+        const r = await fetch(`${cfg.baseUrl}${path}`, { headers, signal: AbortSignal.timeout(15000) });
         status = r.status; type = r.headers.get('content-type') || ''; size = (await r.arrayBuffer()).byteLength;
       }
-      if (status === 200 && /^image\//i.test(type) && size > 0) return { ok: true, size };
-      last = status === 200 ? `الرد ليس صورة (${type || 'بلا نوع'})` : `HTTP ${status}`;
+      if ((status === 200 || (video && status === 206)) && want.test(type) && size > 0) return { ok: true, size };
+      last = status === 200 || status === 206 ? `الرد ليس ${video ? 'فيديو' : 'صورة'} (${type || 'بلا نوع'})` : `HTTP ${status}`;
       if (![404, 425, 503].includes(status)) break;
     } catch (err) { last = err.message; }
     if (i < tries - 1) await new Promise((ok) => setTimeout(ok, waitMs));
@@ -125,13 +129,16 @@ async function upload(buffer, opts = {}) {
   if (opts.folder) form.append('folder', String(opts.folder).slice(0, 120));
   if (opts.name) form.append('name', String(opts.name).slice(0, 200));
   const sha = crypto.createHash('sha256').update(buffer).digest('hex');
+  // ملف كبير (فيديو) يحتاج وقتاً أطول عبر النفق: على الأقل 200 كيلوبايت/ثانية، حتى 3 دقائق
+  const timeoutMs = Math.min(180000, Math.max(UPLOAD_TIMEOUT_MS, Math.round(buffer.length / 200)));
   let res;
   try {
     res = await cfgFetch(cfg, '/api/v1/images', {
       method: 'POST',
       headers: { 'X-Api-Key': cfg.apiKey, 'X-Content-SHA256': sha },
       body: form,
-      signal: AbortSignal.timeout(UPLOAD_TIMEOUT_MS),
+      timeoutMs,
+      signal: AbortSignal.timeout(timeoutMs),
     });
   } catch (err) {
     const e = new Error(`جهاز الصور لا يرد: ${err.cause && err.cause.code ? err.cause.code : err.message}`); e.status = 0; throw e;

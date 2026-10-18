@@ -24,6 +24,8 @@ const router = express.Router();
 // نفق الصور (عام): الموقع والزبائن يرون الصور فقط — /api/image-cloud/relay/media/{id}/{variant}
 const relayRouter = express.Router();
 relayRouter.get(/^\/media\//, relay.serveMedia); // HEAD يُعالَج بنفس الدالة
+// المزامنة بين أجهزة الصور في أماكن مختلفة: الجهاز يثبت هويته بسرّه، والجسم يُمرَّر كما هو
+relayRouter.all(/^\/peer\//, express.raw({ type: () => true, limit: '33mb' }), relay.peerProxy);
 router.use('/relay', relayRouter);
 const admin = requirePermission('images:cloud'); // مدير النظام افتراضياً، ويُمنح لغيره
 
@@ -42,6 +44,7 @@ router.post('/nodes/claim', userOrDevice, c.nodeClaim);           // الجها�
 router.post('/nodes/key', userOrDevice, c.nodeKey);               // الجهاز يرسل مفتاحه حين يطلبه الخادم (بسرّه)
 router.post('/nodes/:nodeId/decide', protect, admin, c.nodeDecide); // موافقة/رفض المدير
 router.delete('/nodes/:nodeId', protect, admin, c.nodeRemove);
-router.get('/relay-status', protect, admin, c.relayStatus);       // الأجهزة المتصلة بالنفق والتخزين المؤقت
+router.get('/relay-status', protect, admin, c.relayStatus);
+router.post('/sync-now', protect, admin, c.syncNow);              // «مزامنة الآن» بين كل أجهزة الصور       // الأجهزة المتصلة بالنفق والتخزين المؤقت
 
 module.exports = router;

@@ -114,7 +114,7 @@ app.use('/api/relay', require('./routes/relayRoutes')); // الرسول: أوا�
 app.use('/api/image-cloud', (req, res, next) => {
   const t0 = Date.now(); const p = req.path;
   res.on('finish', () => {
-    const okMedia = p.startsWith('/relay/media/') && res.statusCode < 400;
+    const okMedia = (p.startsWith('/relay/media/') || p.startsWith('/relay/peer/')) && res.statusCode < 400;
     if (!okMedia) console.log(`[image-cloud] ${req.method} ${p} -> ${res.statusCode} (${Date.now() - t0}ms)`);
   });
   next();

@@ -190,6 +190,48 @@ async function request(method, path, { headers = {}, body = null, timeoutMs = RE
   throw last;
 }
 
+/** طلب على جهاز محدد بعينه (لا بديل) — لـ «مزامنة الآن» وتمرير المزامنة بين الأجهزة. */
+async function requestNode(nodeId, method, path, { headers = {}, body = null, timeoutMs = REQ_TIMEOUT_MS } = {}) {
+  const node = nodes.get(nodeId);
+  if (!node) throw Object.assign(new Error('الجهاز غير متصل بسيرفر ميرو السحابي الآن'), { status: 0 });
+  return sendTo(node, method, path, headers, body, timeoutMs);
+}
+
+/* ═════════ المزامنة بين الأجهزة عبر السيرفر (أماكن مختلفة) ═════════
+   جهاز ──HTTPS بسرّه──→ /api/image-cloud/relay/peer/{جهاز آخر}/internal/sync/(vv|events|blobs/{sha})
+                       ──نفق الجهاز الآخر──→ منفذ المزامنة هناك، حيث يُتحقق من توقيع HMAC بالسر المشترك.
+   السيرفر لا يفهم الأحداث ولا يخزّنها: يمرّر البايتات كما هي (الجسم ≤ 32 ميغابايت، الملفات بأجزاء 8 ميغابايت). */
+const PEER_RX = /^\/peer\/([A-Za-z0-9_-]{1,64})(\/internal\/sync\/(?:vv|events|blobs\/[a-f0-9]{64}))$/;
+const PEER_IN = ['content-type', 'range', 'x-sync-node', 'x-sync-ts', 'x-sync-nonce', 'x-sync-sig', 'x-sync-proto'];
+const PEER_OUT = ['content-type', 'content-range', 'accept-ranges', 'etag', 'last-modified'];
+const PEER_TIMEOUT_MS = Number(process.env.IMAGE_RELAY_PEER_TIMEOUT_MS || 60000);
+
+async function peerProxy(req, res) {
+  const m = PEER_RX.exec(req.path);
+  if (!m) return res.status(404).json({ success: false, message: 'غير موجود' });
+  const [, target, inner] = m;
+  const allowed = (inner === '/internal/sync/vv' && req.method === 'GET') || (inner === '/internal/sync/events' && req.method === 'POST')
+    || (inner.startsWith('/internal/sync/blobs/') && (req.method === 'GET' || req.method === 'HEAD'));
+  if (!allowed) return res.status(405).json({ success: false, message: 'طريقة غير مسموحة' });
+  const from = String(req.headers['x-relay-node'] || '');
+  const who = await authenticate({ type: 'hello', nodeId: from, proof: String(req.headers['x-relay-proof'] || '') }).catch(() => null);
+  if (!who) return res.status(401).json({ success: false, message: 'جهاز غير معروف أو سرّه غير صحيح — أعد اقترانه من لوحة التحكم' });
+  if (from === target) return res.status(400).json({ success: false, message: 'لا مزامنة للجهاز مع نفسه' });
+  const node = nodes.get(target);
+  if (!node) return res.status(503).json({ success: false, message: `الجهاز ${target} غير متصل بسيرفر ميرو السحابي الآن` });
+  const headers = {};
+  PEER_IN.forEach((h) => { if (req.headers[h]) headers[h] = String(req.headers[h]); });
+  const body = Buffer.isBuffer(req.body) && req.body.length ? req.body : null;
+  if (req.method === 'POST' && !body) return res.status(400).json({ success: false, message: 'دفعة فارغة' });
+  let out;
+  try { out = await sendTo(node, req.method, inner, headers, body, PEER_TIMEOUT_MS); }
+  catch (err) { return res.status(err.timeout ? 504 : 502).json({ success: false, message: err.message }); }
+  Object.entries(out.headers || {}).forEach(([k, v]) => { if (PEER_OUT.includes(k.toLowerCase())) res.set(k, v); });
+  res.status(out.status);
+  if (req.method === 'HEAD') return res.end();
+  return res.end(out.body);
+}
+
 /** كـ fetch تماماً (Response حقيقي) — ليستعمله imageCloudService بلا تغيير في منطقه. */
 async function relayFetch(path, init = {}, prefer) {
   const headers = {};
@@ -202,29 +244,53 @@ async function relayFetch(path, init = {}, prefer) {
     const ct = r.headers.get('content-type');
     if (ct) headers['content-type'] = ct;
   }
-  const r = await request(init.method || 'GET', path, { headers, body, prefer });
+  const r = await request(init.method || 'GET', path, { headers, body, prefer, ...(init.timeoutMs ? { timeoutMs: init.timeoutMs } : {}) });
   return new Response(r.status === 204 || r.status === 304 ? null : r.body, { status: r.status, headers: r.headers });
 }
 
 /* ═════════ التخزين المؤقت (LRU) ═════════ */
 
-const cache = new Map(); // key ← { at, size, status, headers, body }
-let cacheSize = 0;
-function cacheGet(key) {
-  const e = cache.get(key);
-  if (!e) return null;
-  if (Date.now() - e.at > CACHE_TTL_MS) { cache.delete(key); cacheSize -= e.size; return null; }
-  cache.delete(key); cache.set(key, e); // الأحدث استعمالاً في الآخر
-  return e;
+/** ذاكرة LRU بحد بايتات: الصور (64MB افتراضياً) والفيديو منفصلاً (96MB) — فيديو واحد لا يطرد كل الصور. */
+function lru(max, maxEntry) {
+  const map = new Map(); let size = 0;
+  return {
+    get(key) {
+      const e = map.get(key);
+      if (!e) return null;
+      if (Date.now() - e.at > CACHE_TTL_MS) { map.delete(key); size -= e.size; return null; }
+      map.delete(key); map.set(key, e); // الأحدث استعمالاً في الآخر
+      return e;
+    },
+    put(key, e) {
+      if (e.size > maxEntry) return; // أكبر من المسموح لعنصر واحد لا يُخزَّن
+      const old = map.get(key); if (old) { map.delete(key); size -= old.size; }
+      map.set(key, e); size += e.size;
+      for (const [k, v] of map) { if (size <= max) break; map.delete(k); size -= v.size; }
+    },
+    clear() { map.clear(); size = 0; },
+    stats() { return { entries: map.size, bytes: size }; },
+  };
 }
-function cachePut(key, e) {
-  if (e.size > CACHE_MAX / 8) return; // صورة ضخمة لا تُخزَّن
-  const old = cache.get(key); if (old) { cache.delete(key); cacheSize -= old.size; }
-  cache.set(key, e); cacheSize += e.size;
-  for (const [k, v] of cache) { if (cacheSize <= CACHE_MAX) break; cache.delete(k); cacheSize -= v.size; }
+const VIDEO_CACHE_MAX = Number(process.env.IMAGE_RELAY_VIDEO_CACHE_MB || 96) * 1024 * 1024;
+const imgCache = lru(CACHE_MAX, CACHE_MAX / 8);
+const vidCache = lru(VIDEO_CACHE_MAX, MAX_BODY);
+const isVideoType = (h) => /^video\//i.test(String((h && (h['content-type'] || h['Content-Type'])) || ''));
+const cacheGet = (key) => imgCache.get(key) || vidCache.get(key);
+const cachePut = (key, e) => (isVideoType(e.headers) ? vidCache : imgCache).put(key, e);
+const clearCache = () => { imgCache.clear(); vidCache.clear(); };
+const cacheStats = () => { const a = imgCache.stats(); const b = vidCache.stats(); return { entries: a.entries + b.entries, bytes: a.bytes + b.bytes, video: b }; };
+
+/** «bytes=a-b» من نسخة كاملة في الذاكرة ← { start, end } أو null (غير صالح) أو undefined (بلا Range). */
+function parseRange(header, total) {
+  if (!header) return undefined;
+  const m = /^bytes=(\d*)-(\d*)$/.exec(String(header).trim());
+  if (!m || (m[1] === '' && m[2] === '')) return null;
+  let start; let end;
+  if (m[1] === '') { const n = Number(m[2]); start = Math.max(0, total - n); end = total - 1; } // آخر n بايت
+  else { start = Number(m[1]); end = m[2] === '' ? total - 1 : Math.min(Number(m[2]), total - 1); }
+  if (start > end || start >= total) return null;
+  return { start, end };
 }
-const clearCache = () => { cache.clear(); cacheSize = 0; };
-const cacheStats = () => ({ entries: cache.size, bytes: cacheSize });
 
 /* ═════════ عرض الصور للعامة ═════════ */
 
@@ -238,14 +304,15 @@ async function serveMedia(req, res) {
   const qs = req.originalUrl.includes('?') ? req.originalUrl.slice(req.originalUrl.indexOf('?')) : '';
   const fwd = {};
   ['range', 'if-none-match', 'if-modified-since', 'accept'].forEach((h) => { if (req.headers[h]) fwd[h] = req.headers[h]; });
-  const cacheable = !fwd.range && !/[?&](sig|exp|token)=/.test(qs);
+  // الروابط العامة (بلا توقيع) تُجلب كاملة مرة واحدة وتُخزَّن، وطلبات Range (مشغّل الفيديو) تُخدم منها هنا
+  const cacheable = !/[?&](sig|exp|token)=/.test(qs);
   const key = path + qs;
 
   let r = cacheable ? cacheGet(key) : null;
   const fromCache = !!r;
   if (!r) {
     try {
-      const out = await request('GET', path + qs, { headers: cacheable ? { accept: fwd.accept || '*/*' } : fwd, tryAllOn404: true });
+      const out = await request('GET', path + qs, { headers: cacheable ? { accept: fwd.accept || '*/*' } : fwd, tryAllOn404: true, timeoutMs: 120000 });
       r = { status: out.status, headers: out.headers, body: out.body, size: out.body.length, at: Date.now() };
       if (cacheable && out.status === 200) cachePut(key, r);
     } catch (err) {
@@ -254,14 +321,27 @@ async function serveMedia(req, res) {
     }
   }
   const h = {};
-  Object.entries(r.headers || {}).forEach(([k, v]) => { if (PASS.includes(k.toLowerCase())) h[k] = v; });
+  Object.entries(r.headers || {}).forEach(([k, v]) => { if (PASS.includes(k.toLowerCase()) && k.toLowerCase() !== 'content-range') h[k] = v; });
   res.set(h);
   res.set('Cross-Origin-Resource-Policy', 'cross-origin');
   res.set('X-Image-Relay', fromCache ? 'hit' : 'miss');
   if (!h['cache-control'] && !h['Cache-Control'] && r.status === 200) res.set('Cache-Control', 'public, max-age=86400');
   // إعادة تحقق المتصفح من النسخة المخزّنة
   const etag = r.headers && (r.headers.etag || r.headers.ETag);
-  if (fromCache && etag && req.headers['if-none-match'] === etag) return res.status(304).end();
+  if (fromCache && etag && req.headers['if-none-match'] === etag && !fwd.range) return res.status(304).end();
+  if (cacheable && r.status === 200) {
+    res.set('Accept-Ranges', 'bytes');
+    const range = parseRange(fwd.range, r.body.length);
+    if (range === null) { res.set('Content-Range', `bytes */${r.body.length}`); return res.status(416).end(); }
+    if (range) {
+      res.set('Content-Range', `bytes ${range.start}-${range.end}/${r.body.length}`);
+      res.set('Content-Length', String(range.end - range.start + 1));
+      res.status(206);
+      return req.method === 'HEAD' ? res.end() : res.end(r.body.subarray(range.start, range.end + 1));
+    }
+  } else if (r.headers && (r.headers['content-range'] || r.headers['Content-Range'])) {
+    res.set('Content-Range', r.headers['content-range'] || r.headers['Content-Range']);
+  }
   res.status(r.status);
   if (req.method === 'HEAD') { res.set('Content-Length', String(r.body.length)); return res.end(); }
   return res.end(r.body);
@@ -294,6 +374,6 @@ function isPrivateUrl(u) {
 function reset() { for (const n of nodes.values()) { try { n.ws.terminate(); } catch (_) { /* */ } } nodes.clear(); clearCache(); }
 
 module.exports = {
-  WS_PATH, MOUNT, init, handleUpgrade, request, relayFetch, serveMedia, baseFor, isRelayUrl,
+  WS_PATH, MOUNT, init, handleUpgrade, request, requestNode, peerProxy, relayFetch, serveMedia, baseFor, isRelayUrl,
   connectedCount, status, clearCache, cacheStats, reset, setPreferred, isConnected, isPrivateUrl,
 };

@@ -394,6 +394,31 @@ const diagnose = async (req, res) => {
   res.json({ success: true, diagnosis: out });
 };
 
+/**
+ * «مزامنة الآن»: يطلب من كل جهاز صور متصل أن يدفع ما ينقص الأجهزة الأخرى ويجلب ما ينقصه
+ * (مباشرة على نفس الشبكة، أو عبر هذا السيرفر من أماكن مختلفة)، ويعرض حالة كل جهاز.
+ */
+const syncNow = async (req, res) => {
+  const doc = await ImageCloud.findOne({ key: 'main' }).lean();
+  const list = (doc && doc.nodes) || [];
+  const names = Object.fromEntries(list.map((n) => [n.nodeId, n.name || n.machine || n.nodeId]));
+  const nodes = await Promise.all(list.map(async (n) => {
+    const base = { nodeId: n.nodeId, name: names[n.nodeId], kind: n.kind || 'pos', lastSeen: n.lastSeen || null };
+    if (!relay.isConnected(n.nodeId)) return { ...base, connected: false };
+    try {
+      const out = await relay.requestNode(n.nodeId, 'POST', '/relay/sync-now', { timeoutMs: 30000 });
+      if (out.status === 404) return { ...base, connected: true, error: 'برنامج هذا الجهاز قديم — حدّثه ليتزامن عبر السيرفر' };
+      if (out.status !== 200) return { ...base, connected: true, error: `رد غير متوقع (${out.status})` };
+      const r = JSON.parse(out.body.toString('utf8'));
+      const peers = (r.peers || []).map((p) => ({ ...p, name: names[p.nodeId] || p.nodeId }));
+      return { ...base, connected: true, images: r.images, missingFiles: r.missingFiles, fetching: r.fetching, error: r.error || null, peers };
+    } catch (err) {
+      return { ...base, connected: true, error: err.message };
+    }
+  }));
+  res.json({ success: true, nodes, at: new Date() });
+};
+
 const relayStatus = async (req, res) => res.json({ success: true, devices: relay.status(), cache: relay.cacheStats() });
 
-module.exports = wrapAll({ get, update, test, migrateStatus, migrateStart, nodeJoin, nodeHeartbeat, nodeRemove, nodeRequest, nodeDecide, nodeClaim, relayStatus, nodeKey, diagnose, pairCode, nodePair });
+module.exports = wrapAll({ get, update, test, migrateStatus, migrateStart, nodeJoin, nodeHeartbeat, nodeRemove, nodeRequest, nodeDecide, nodeClaim, relayStatus, nodeKey, diagnose, pairCode, nodePair, syncNow });

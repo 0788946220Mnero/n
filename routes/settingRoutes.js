@@ -26,6 +26,10 @@ const {
   setMainGalleryImage,
   addMenuBanner,
   deleteMenuBanner,
+  getCustomerDisplay,
+  updateCustomerDisplay,
+  addDisplayAd,
+  deleteDisplayAd,
 } = require('../controllers/settingController');
 
 // عام — تستخدمه واجهة الموقع لعرض نبذة عنا / مواعيد العمل / واتساب الشكاوى / الخريطة / خلفية الهيرو / معرض الصور
@@ -60,7 +64,14 @@ router.delete('/reels/:reelId', protect, authorize('admin', 'manager'), deleteRe
 router.post('/logo', protect, authorize('admin', 'manager'), upload.single('image'), optimizeImages, uploadLogo);
 router.delete('/logo', protect, authorize('admin', 'manager'), deleteLogo);
 
-router.post('/menu-banners', protect, authorize('admin', 'manager'), upload.single('image'), optimizeImages, addMenuBanner);
+// البانر: صورة أو فيديو (MP4/WebM حتى 25 ميغابايت على سحابة الصور) — الحقل image كما كان
+router.post('/menu-banners', protect, authorize('admin', 'manager'), upload.uploadMedia.single('image'), optimizeImages, addMenuBanner);
 router.delete('/menu-banners/:bannerId', protect, authorize('admin', 'manager'), deleteMenuBanner);
+
+// شاشة العميل (الشاشة الثانية للكاشير): القراءة عامة، والتعديل للوحة التحكم
+router.get('/customer-display', getCustomerDisplay);
+router.put('/customer-display', protect, authorize('admin', 'manager'), updateCustomerDisplay);
+router.post('/customer-display/ads', protect, authorize('admin', 'manager'), upload.uploadMedia.single('media'), addDisplayAd);
+router.delete('/customer-display/ads/:adId', protect, authorize('admin', 'manager'), deleteDisplayAd);
 
 module.exports = router;

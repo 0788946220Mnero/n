@@ -106,9 +106,30 @@ const settingSchema = new mongoose.Schema(
         {
           url: { type: String, required: true },
           order: { type: Number, default: 0 },
+          // صورة أو فيديو (MP4/WebM من سحابة الصور) — الفيديو يُشغَّل صامتاً حتى ينتهي ثم الشريحة التالية
+          type: { type: String, enum: ['image', 'video'], default: 'image' },
         },
       ],
       default: [],
+    },
+
+    // شاشة العميل (الشاشة الثانية على جهاز الكاشير): إعلانات صور وفيديو بملء الشاشة،
+    // وشريط صغير بأصناف الطلب الحالي ومجموعه — لا يرى الزبون شيئاً من عمل الكاشير.
+    customerDisplay: {
+      ads: {
+        type: [
+          {
+            url: { type: String, required: true },
+            type: { type: String, enum: ['image', 'video'], default: 'image' },
+            order: { type: Number, default: 0 },
+          },
+        ],
+        default: [],
+      },
+      showOrder: { type: Boolean, default: true },        // شريط الطلب الحالي ومجموعه
+      includeMenuBanners: { type: Boolean, default: true }, // بانرات المينيو تُعرض أيضاً بعد الإعلانات
+      imageSeconds: { type: Number, default: 8, min: 3, max: 60 }, // مدة الصورة (الفيديو حتى ينتهي)
+      welcomeText: { type: String, default: 'أهلاً بكم في ديار الأنباط', maxlength: 120 },
     },
 
     // ريلز المطعم (فيديوهات قصيرة) — تُدار بالكامل من لوحة التحكم
