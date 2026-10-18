@@ -27,6 +27,16 @@ const expenseSchema = new mongoose.Schema(
     approvedSignature: { type: String, default: '' },
     brand: { type: String, default: 'diyar' },
 
+    // قسط يومي من «الالتزامات الثابتة»: يُطبع بختم «مدفوع» وتوقيع مدير النظام الذي اعتمد الالتزام
+    obligation: { type: mongoose.Schema.Types.ObjectId, ref: 'FixedObligation', default: null, index: true },
+    obligationCycle: { type: mongoose.Schema.Types.ObjectId, ref: 'ObligationCycle', default: null, index: true },
+    obligationNumber: { type: Number, default: null },
+    obligationDay: { type: String, default: '' }, // YYYY-MM-DD (عمّان)
+    obligationDue: { type: String, default: '' }, // موعد السداد
+    obligationAmount: { type: Number, default: null }, // مبلغ الدورة
+    obligationRemaining: { type: Number, default: null }, // المتبقي بعد هذا القسط
+    obligationDaysLeft: { type: Number, default: null }, // الأيام المتبقية بعد اليوم
+
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
     createdByName: { type: String, default: '' },
 

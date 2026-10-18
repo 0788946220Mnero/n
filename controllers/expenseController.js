@@ -170,11 +170,23 @@ const voidExpense = async (req, res) => {
   if (expense.closed && expense.source !== 'capital') return res.status(400).json({ message: 'أُغلق جرد هذا المصروف، فلا يمكن إلغاؤه' });
   if (expense.voided) return res.status(400).json({ message: 'المصروف ملغى مسبقاً' });
 
+  // قسط التزام ثابت: يُلغى ما دامت دورته مفتوحة (بعد موعدها سُدّدت أو صُدّرت للذمم)
+  let obligationCycle = null;
+  if (expense.obligationCycle) {
+    obligationCycle = await require('../models/ObligationCycle').findById(expense.obligationCycle).lean();
+    if (!obligationCycle || obligationCycle.status !== 'open') {
+      return res.status(400).json({ message: 'انتهت دورة هذا الالتزام (سُدّدت أو صُدِّر متبقيها لذمم الموردين) — لا يُلغى قسطها' });
+    }
+  }
   require('../utils/activity').logActivity({ req, action: 'expense.void', amount: expense.amount, details: { name: expense.name, number: expense.number } });
   expense.voided = true;
   expense.voidedByName = nameOf(req.user);
   expense.voidedAt = new Date();
   await expense.save();
+  if (obligationCycle) {
+    // يعود المبلغ للمتبقي فيُوزَّع على الأيام الباقية
+    await require('../models/ObligationCycle').updateOne({ _id: obligationCycle._id }, { $inc: { paid: -Number(expense.amount), payments: -1 } });
+  }
   if (expense.source === 'capital') {
     // حركة رأس المال المرتبطة تُلغى فيعود المبلغ للرصيد
     await require('../models/CapitalEntry').updateMany(
@@ -239,3 +251,6 @@ const logExpenses = async (req, res) => {
 };
 
 module.exports = wrapAll({ createExpense, listExpenses, voidExpense, logExpenses, getSignature, setSignature, getExpense });
+// رقم سند الصرف التسلسلي — يستعمله «الالتزامات الثابتة» لأقساطه اليومية (نفس تسلسل السندات)
+module.exports.nextExpenseNumber = nextNumber;
+module.exports.validSignature = validSignature;

@@ -66,6 +66,10 @@ const receivableSchema = new mongoose.Schema(
     collectionClosed: { type: Boolean, default: false, index: true },
     collectionShiftId: { type: String, default: '' },
 
+    // صُدِّرت من «الالتزامات الثابتة»: متبقي دورة لم يُسدَّد حتى موعدها
+    obligation: { type: mongoose.Schema.Types.ObjectId, ref: 'FixedObligation', default: null },
+    obligationCycle: { type: mongoose.Schema.Types.ObjectId, ref: 'ObligationCycle', default: null },
+
     // الإزالة: أرشفة لا حذف — لمدير النظام وحده
     deleted: { type: Boolean, default: false, index: true },
     deletedAt: { type: Date, default: null },

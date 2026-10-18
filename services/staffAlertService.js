@@ -31,6 +31,9 @@ const CATALOG = [
   { type: 'expense.create', label: 'مصروف جديد', hint: 'المبلغ والبند ومن سجّله', roles: ['admin'], amount: true, url: 'dashboard.html#expenses' },
   { type: 'expense.void', label: 'إلغاء مصروف', hint: 'أي سند ألغي ومن ألغاه', roles: ['admin'], url: 'dashboard.html#expenses' },
   { type: 'drawer.open', label: 'فتح الدرج بلا بيع', hint: 'من فتح درج النقود يدوياً', roles: ['admin'], url: 'dashboard.html#orders' },
+  { type: 'obligation.pay', label: 'دفع قسط التزام ثابت', hint: 'القسط ومن دفعه والمتبقي حتى الموعد', roles: ['admin'], amount: true, url: 'dashboard.html#obligations' },
+  { type: 'obligation.missed', label: 'قسط التزام لم يُدفع', hint: 'صباح اليوم التالي: القسط الجديد بعد توزيع الفائت', roles: ['admin', 'manager', 'cashier'], url: 'dashboard.html#obligations' },
+  { type: 'obligation.exported', label: 'التزام لم يُسدَّد حتى موعده', hint: 'صُدِّر المتبقي إلى ذمم الموردين', roles: ['admin', 'manager'], url: 'dashboard.html#receivables' },
   { type: 'login', label: 'تسجيل دخول للوحة', hint: 'من دخل ومن أين — معطّل افتراضياً', roles: ['admin'], off: true, url: 'dashboard.html#activity' },
 ];
 const TYPES = CATALOG.map((c) => c.type);
@@ -156,6 +159,9 @@ function compose(type, d, order) {
     case 'expense.create': return { title: `💸 مصروف ${amt}`, body: `${det.name || 'بلا بند'} — من ${det.source || 'الصندوق'} · سجّله ${who}` };
     case 'expense.void': return { title: `↩️ أُلغي مصروف${det.number ? ` #${det.number}` : ''}${amt ? ` (${amt})` : ''}`, body: `${det.name || ''}${det.name ? ' — ' : ''}ألغاه ${who}` };
     case 'drawer.open': return { title: '💵 فُتح الدرج بلا بيع', body: `فتحه ${who}` };
+    case 'obligation.pay': return { title: `📆 قسط «${det.name || 'التزام'}» ${amt}`, body: `دفعه ${who} من ${det.source || 'الصندوق'}${det.voucher ? ` · سند #${det.voucher}` : ''}\nالمتبقي ${m3(det.remaining)} د.أ${det.daysLeft ? ` على ${det.daysLeft} يوم` : ''}` };
+    case 'obligation.missed': return { title: `⚠️ لم يُدفع قسط «${det.name || 'التزام'}» أمس`, body: `${det.lastDay ? 'اليوم آخر يوم: ' : 'قسط اليوم صار '}${m3(det.need)} د.أ\nالمتبقي ${m3(det.remaining)} د.أ حتى ${det.due || 'الموعد'}` };
+    case 'obligation.exported': return { title: `📌 «${det.name || 'التزام'}» لم يُسدَّد حتى موعده`, body: `صُدِّر المتبقي ${amt} إلى ذمم الموردين${det.receivable ? ` (#${det.receivable})` : ''} — ${det.payee || ''}` };
     case 'login': return { title: `🔑 دخول: ${who}`, body: `${ROLE_LABELS[d.role] || d.role || ''}${d.ip ? ` · ${d.ip}` : ''}` };
     default: return null;
   }

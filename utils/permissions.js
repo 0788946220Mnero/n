@@ -43,12 +43,15 @@ const PERMISSIONS = [
   { key: 'stats:live', label: 'التقرير الحي على شاشة القفل: المبيعات والمصروفات ومن جرده مفتوح (يُخفى حتى Face ID)' },
   { key: 'images:cloud', label: 'سحابة الصور: ربط خادم الصور (DiyarPOS)، مفتاحه، ونقل الصور من Cloudinary' },
   { key: 'loyalty:use', label: 'الولاء عند البيع: البحث عن العضو برقمه أو بطاقته، رصيده، واستبدال المكافآت' },
+  { key: 'obligations:manage', label: 'الالتزامات الثابتة: إنشاؤها وتعديلها بتوقيع مدير النظام (إيجار، اشتراكات، أقساط)' },
+  { key: 'obligations:pay', label: 'الالتزامات الثابتة: دفع القسط اليومي بسند صرف عليه ختم «مدفوع»' },
   { key: 'loyalty:manage', label: 'إدارة الولاء: الأعضاء والتعديل اليدوي للنقاط، المكافآت، القواعد، وحالة بطاقات Apple/Google' },
   // عرض فقط — لمراقب البيانات (ويُمنح لغيره): يرى ولا يعدّل
   { key: 'capital:view', label: 'رأس المال: عرض الرصيد والحركات فقط (بلا إيداع ولا سحب)', view: true },
   { key: 'receivables:view', label: 'ذمم الموردين: عرض الفواتير المخزّنة وصورها فقط', view: true },
   { key: 'employees:view', label: 'الموظفون: عرض كشوف حساباتهم وسحوباتهم فقط', view: true },
   { key: 'expenses:view', label: 'المصروفات وسندات الصرف: عرض فقط', view: true },
+  { key: 'obligations:view', label: 'الالتزامات الثابتة: عرض الأقساط والدورات فقط', view: true },
 ];
 
 const ALL_KEYS = PERMISSIONS.map((p) => p.key);
@@ -60,7 +63,7 @@ const ROLE_PERMISSIONS = {
   // رأس المال لمدير النظام وحده افتراضياً (يُمنح لغيره من «المستخدمون» عند الحاجة)
   // رأس المال وصرف الموظفين: لمدير النظام افتراضياً، ويُمنحان لغيره من «المستخدمون»
   // والأوامر الصوتية: لمدير النظام افتراضياً، ويمنحها لمن يريد
-  manager: ALL_KEYS.filter((k) => !['users:manage', 'capital:manage', 'capital:view', 'employees:pay', 'voice:commands', 'stats:live', 'images:cloud', 'staff:notify'].includes(k)),
+  manager: ALL_KEYS.filter((k) => !['users:manage', 'capital:manage', 'capital:view', 'employees:pay', 'voice:commands', 'stats:live', 'images:cloud', 'staff:notify', 'obligations:manage'].includes(k)),
   cashier: [
     'orders:view',
     'orders:manage',
@@ -74,6 +77,7 @@ const ROLE_PERMISSIONS = {
     'supplies:manage', // قائمة البضائع المطلوبة
     'center:sell', // بيع سنتر من داخل المطعم (يُؤكَّد ويُطبع فوراً)
     'loyalty:use', // الولاء عند البيع: بحث العضو واستبدال مكافأة (التعديل اليدوي للإدارة)
+    'obligations:pay', // الالتزامات الثابتة: دفع قسط اليوم من صندوقه
   ],
   employee: ['orders:view', 'products:view', 'center:sell'],
   // موظف سنتر (من المنزل): يستقبل الاتصالات ويرسل الطلبات للمطعم فقط —
@@ -81,7 +85,7 @@ const ROLE_PERMISSIONS = {
   center: ['center:sell'],
   delivery: [], // حساب محاسبي للمندوب — بلا دخول ولا صلاحيات
   // مراقب بيانات: يرى المبيعات والإحصائيات والجرد ورأس المال وفواتير الموردين وسحوبات الموظفين — بلا أي تعديل
-  observer: ['stats:view', 'orders:view', 'shifts:view', 'capital:view', 'receivables:view', 'employees:view', 'expenses:view'],
+  observer: ['stats:view', 'orders:view', 'shifts:view', 'capital:view', 'receivables:view', 'employees:view', 'expenses:view', 'obligations:view'],
 };
 
 // هل يستخدم المستخدم صلاحيات مخصّصة أم يرث صلاحيات دوره؟
