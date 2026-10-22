@@ -15,7 +15,7 @@ const ChatConversation = require('../models/ChatConversation');
 const ChatMessage = require('../models/ChatMessage');
 const ChatMedia = require('../models/ChatMedia');
 const ChatSetting = require('../models/ChatSetting');
-const { effectivePermissionsFor } = require('../utils/permissions');
+const { effectivePermissionsFor, PERSONAL_KEYS } = require('../utils/permissions');
 
 const rt = () => require('./realtimeService');
 const can = (u, k) => !!u && (u.perms || effectivePermissionsFor(u)).includes(k);
@@ -390,15 +390,40 @@ async function sweepMedia() {
   const r = await ChatMedia.updateMany({ createdAt: { $lt: before }, expired: { $ne: true } }, { $set: { expired: true, data: null } });
   return r.modifiedCount || 0;
 }
+/* ═════════ ترحيل مرة واحدة: الدردشة لمن لديه «صلاحيات مخصّصة» ═════════
+   من حُفظت له صلاحيات مخصّصة قبل إضافة الدردشة لا تشمل chat:use ولا chat:calls،
+   فلا يراها وإن كان دوره يملكها. نضيفها له مرة واحدة (ما عدا مدير النظام والمندوب)،
+   ثم يتحكم مدير النظام بها كأي صلاحية. العلامة تمنع تكرار الترحيل بعد أي تعديل لاحق. */
+async function migratePersonalPermissions() {
+  const cur = await ChatSetting.findOne({ key: 'settings' }).lean();
+  if (cur && cur.personalPermsMigrated) return 0;
+  const User = require('../models/User');
+  const users = await User.find({ role: { $ne: 'admin' } }).select('role permissions').lean();
+  let changed = 0;
+  for (const u of users) {
+    const own = Array.isArray(u.permissions) ? u.permissions : [];
+    // بلا صلاحيات مخصّصة يرث دوره (وفيه الدردشة)، والمندوب بلا دخول أصلاً
+    if (!own.length || u.role === 'delivery') continue;
+    const missing = PERSONAL_KEYS.filter((k) => !own.includes(k));
+    if (!missing.length) continue;
+    await User.updateOne({ _id: u._id }, { $set: { permissions: [...own, ...missing] } });
+    changed++;
+  }
+  await ChatSetting.findOneAndUpdate({ key: 'settings' }, { $set: { personalPermsMigrated: true } }, { upsert: true, setDefaultsOnInsert: true });
+  if (changed) console.log(`دردشة الطاقم: أُضيفت صلاحيات الدردشة لـ ${changed} مستخدم بصلاحيات مخصّصة (مرة واحدة)`);
+  return changed;
+}
+
 let timer = null;
 function start() {
   if (timer) return;
+  migratePersonalPermissions().catch((e) => console.error('chat permissions migration:', e.message));
   timer = setInterval(() => sweepMedia().catch((e) => console.error('chat media sweep:', e.message)), 6 * 3600 * 1000);
   if (timer.unref) timer.unref();
 }
 
 module.exports = {
   ALL, ALL_NAME, settings, saveSettings, chatUsers, invalidateUsers, ensureAll, memberIds, isMember, canMonitor, can,
-  summary, messageOut, preview, post, directWith, iceServers, pendingFor, onSocket, onConnect, onDisconnect, sweepMedia, start,
+  summary, messageOut, preview, post, directWith, iceServers, pendingFor, onSocket, onConnect, onDisconnect, sweepMedia, migratePersonalPermissions, start,
   _calls: calls, _reset: () => { calls.forEach((c) => clearTimeout(c.timer)); calls.clear(); busy.clear(); typingConv.clear(); usersCache = null; setCache = null; },
 };

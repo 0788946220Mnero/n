@@ -10,6 +10,7 @@ const chatSettingSchema = new mongoose.Schema(
     imagesEnabled: { type: Boolean, default: true },
     maxVoiceSec: { type: Number, default: 300, min: 10, max: 900 },
     retentionDays: { type: Number, default: 0, min: 0, max: 3650 }, // 0 = الوسائط تبقى دائماً
+    personalPermsMigrated: { type: Boolean, default: false }, // ترحيل صلاحيات الدردشة لمرة واحدة (انظر chatService)
   },
   { timestamps: true }
 );
