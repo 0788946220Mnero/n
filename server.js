@@ -109,7 +109,8 @@ app.use('/api/employees', require('./routes/employeeRoutes')); // الموظفو
 app.use('/api/center', require('./routes/centerRoutes')); // بيع سنتر: طلبات هاتفية + سجل الزبون + مراقبة الموظفين
 app.use('/api/live-report', require('./routes/liveReportRoutes')); // التقرير الحي على شاشة القفل (Web Push)
 app.use('/api/staff-alerts', require('./routes/staffAlertRoutes')); // إشعارات الطاقم: من مدير النظام وحركات المطعم لأجهزة الموظفين
-app.use('/api/obligations', require('./routes/obligationRoutes')); // الالتزامات الثابتة: تقسيط يومي حتى موعد السداد ثم ذمم الموردين
+app.use('/api/obligations', require('./routes/obligationRoutes'));
+app.use('/api/chat', require('./routes/chatRoutes')); // دردشة الطاقم: رسائل وصوت وصور ومكالمات (الإشارات عبر /ws) // الالتزامات الثابتة: تقسيط يومي حتى موعد السداد ثم ذمم الموردين
 app.use('/api/relay', require('./routes/relayRoutes')); // الرسول: أوامر المدير من هاتفه لجهاز الكاشير
 // IMAGE-SERVER: سجل تشخيص لطلبات سحابة الصور — الطريقة والمسار والرمز والمدة فقط (لا query ولا رؤوس ولا أجسام).
 // عرض الصور الناجح للزبائن لا يُسجَّل (كثير ولا يفيد)؛ كل فشل يُسجَّل.
@@ -174,6 +175,7 @@ server.listen(PORT, () => {
   console.log(`🌐 النطاقات المسموحة: ${allowedOrigins.join(' | ')}`);
   // التقرير الحي: تحديث دوري أثناء الدوام (كل 15 دقيقة افتراضياً)
   try { require('./services/liveReportService').start(); } catch (e) { console.error('liveReport:', e.message); }
+  try { require('./services/chatService').start(); } catch (e) { console.error('chat:', e.message); } // دردشة الطاقم: مدة الاحتفاظ بالوسائط
   try { require('./services/obligationService').start(); } catch (e) { console.error('obligations:', e.message); } // الالتزامات الثابتة: الإغلاق والتصدير وتنبيه الأيام الفائتة
 });
 

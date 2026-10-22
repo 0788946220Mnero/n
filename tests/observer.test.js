@@ -14,7 +14,7 @@ const jwt = require('jsonwebtoken');
   .forEach((m) => require(`../models/${m}`));
 require('./helpers/memoryDb').installAll();
 const M = (n) => require('mongoose').model(n);
-const { effectivePermissionsFor, ROLE_PERMISSIONS, VIEW_KEYS } = require('../utils/permissions');
+const { effectivePermissionsFor, ROLE_PERMISSIONS, VIEW_KEYS, PERSONAL_KEYS } = require('../utils/permissions');
 
 let server; let base; const tokens = {}; const ids = {};
 const call = async (method, url, { token, body } = {}) => {
@@ -54,7 +54,9 @@ test.before(async () => {
 test.after(() => server.close());
 
 test('الصلاحيات: دور المراقب «عرض» فقط، وما مُنح بالخطأ من صلاحيات التعديل يسقط', () => {
-  assert.deepEqual(ROLE_PERMISSIONS.observer.filter((k) => !VIEW_KEYS.includes(k)), [], 'كل صلاحيات الدور للعرض');
+  // كل صلاحيات الدور للعرض — عدا الشخصية (دردشته ومكالماته) التي لا تعدّل بيانات المطعم
+  assert.deepEqual(ROLE_PERMISSIONS.observer.filter((k) => !VIEW_KEYS.includes(k) && !PERSONAL_KEYS.includes(k)), [], 'كل صلاحيات الدور للعرض');
+  assert.deepEqual(PERSONAL_KEYS, ['chat:use', 'chat:calls'], 'الشخصية: الدردشة والمكالمات فقط');
   for (const k of ['stats:view', 'orders:view', 'shifts:view', 'capital:view', 'receivables:view', 'employees:view', 'expenses:view']) {
     assert.ok(ROLE_PERMISSIONS.observer.includes(k), k);
   }

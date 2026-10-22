@@ -115,6 +115,8 @@ function bye(userId) {
 }
 
 function snapshot() { return [...live.values()].map(snapshotOf); }
+/** حالة مستخدم واحد: { online, state } أو null. */
+function stateOf(userId) { const e = live.get(String(userId)); return e ? { online: e.sockets.size > 0, state: e.sockets.size ? e.state : 'offline' } : null; }
 
 /** نبضة: آخر ظهور للجلسات الحية (مرة كل دقيقة) — لو سقط الخادم فجأة يبقى وقت دقيق. */
 function heartbeat() {
@@ -139,4 +141,4 @@ function init(notifier) {
   closeStale();
 }
 
-module.exports = { init, connect, disconnect, setState, bye, snapshot, GRACE_MS };
+module.exports = { init, connect, disconnect, setState, bye, snapshot, stateOf, GRACE_MS };

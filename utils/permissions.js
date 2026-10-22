@@ -45,6 +45,9 @@ const PERMISSIONS = [
   { key: 'loyalty:use', label: 'الولاء عند البيع: البحث عن العضو برقمه أو بطاقته، رصيده، واستبدال المكافآت' },
   { key: 'obligations:manage', label: 'الالتزامات الثابتة: إنشاؤها وتعديلها بتوقيع مدير النظام (إيجار، اشتراكات، أقساط)' },
   { key: 'obligations:pay', label: 'الالتزامات الثابتة: دفع القسط اليومي بسند صرف عليه ختم «مدفوع»' },
+  { key: 'chat:use', label: 'دردشة الطاقم: المحادثات والمجموعات والرسائل الصوتية والصور', personal: true },
+  { key: 'chat:calls', label: 'دردشة الطاقم: المكالمات الصوتية والمرئية', personal: true },
+  { key: 'chat:monitor', label: 'إدارة الدردشة (مدير النظام): مراجعة كل المحادثات، الحذف، والإعدادات' },
   { key: 'loyalty:manage', label: 'إدارة الولاء: الأعضاء والتعديل اليدوي للنقاط، المكافآت، القواعد، وحالة بطاقات Apple/Google' },
   // عرض فقط — لمراقب البيانات (ويُمنح لغيره): يرى ولا يعدّل
   { key: 'capital:view', label: 'رأس المال: عرض الرصيد والحركات فقط (بلا إيداع ولا سحب)', view: true },
@@ -57,13 +60,15 @@ const PERMISSIONS = [
 const ALL_KEYS = PERMISSIONS.map((p) => p.key);
 const VIEW_KEYS = PERMISSIONS.filter((p) => p.view).map((p) => p.key);
 const READ_ONLY_ROLES = ['observer'];
+// مفاتيح شخصية لا تعدّل بيانات المطعم: مسموحة لمراقب البيانات أيضاً (دردشته ومكالماته)
+const PERSONAL_KEYS = PERMISSIONS.filter((p) => p.personal).map((p) => p.key);
 
 const ROLE_PERMISSIONS = {
   admin: [...ALL_KEYS],
   // رأس المال لمدير النظام وحده افتراضياً (يُمنح لغيره من «المستخدمون» عند الحاجة)
   // رأس المال وصرف الموظفين: لمدير النظام افتراضياً، ويُمنحان لغيره من «المستخدمون»
   // والأوامر الصوتية: لمدير النظام افتراضياً، ويمنحها لمن يريد
-  manager: ALL_KEYS.filter((k) => !['users:manage', 'capital:manage', 'capital:view', 'employees:pay', 'voice:commands', 'stats:live', 'images:cloud', 'staff:notify', 'obligations:manage'].includes(k)),
+  manager: ALL_KEYS.filter((k) => !['users:manage', 'capital:manage', 'capital:view', 'employees:pay', 'voice:commands', 'stats:live', 'images:cloud', 'staff:notify', 'obligations:manage', 'chat:monitor'].includes(k)),
   cashier: [
     'orders:view',
     'orders:manage',
@@ -78,14 +83,15 @@ const ROLE_PERMISSIONS = {
     'center:sell', // بيع سنتر من داخل المطعم (يُؤكَّد ويُطبع فوراً)
     'loyalty:use', // الولاء عند البيع: بحث العضو واستبدال مكافأة (التعديل اليدوي للإدارة)
     'obligations:pay', // الالتزامات الثابتة: دفع قسط اليوم من صندوقه
+    'chat:use', 'chat:calls', // دردشة الطاقم
   ],
-  employee: ['orders:view', 'products:view', 'center:sell'],
+  employee: ['orders:view', 'products:view', 'center:sell', 'chat:use', 'chat:calls'],
   // موظف سنتر (من المنزل): يستقبل الاتصالات ويرسل الطلبات للمطعم فقط —
   // لا دفع ولا إلغاء ولا بيع سفري ولا قوائم الطلبات والزبائن (يفرضه الخادم أيضاً)
-  center: ['center:sell'],
+  center: ['center:sell', 'chat:use', 'chat:calls'],
   delivery: [], // حساب محاسبي للمندوب — بلا دخول ولا صلاحيات
   // مراقب بيانات: يرى المبيعات والإحصائيات والجرد ورأس المال وفواتير الموردين وسحوبات الموظفين — بلا أي تعديل
-  observer: ['stats:view', 'orders:view', 'shifts:view', 'capital:view', 'receivables:view', 'employees:view', 'expenses:view', 'obligations:view'],
+  observer: ['stats:view', 'orders:view', 'shifts:view', 'capital:view', 'receivables:view', 'employees:view', 'expenses:view', 'obligations:view', 'chat:use', 'chat:calls'],
 };
 
 // هل يستخدم المستخدم صلاحيات مخصّصة أم يرث صلاحيات دوره؟
@@ -98,7 +104,7 @@ const effectivePermissionsFor = (user) => {
   if (user.role === 'admin') return [...ALL_KEYS];
   const list = usesCustomPermissions(user) ? user.permissions.filter((p) => ALL_KEYS.includes(p)) : (ROLE_PERMISSIONS[user.role] || []);
   // مراقب البيانات: «عرض» فقط حتى لو مُنح غيرها بالخطأ
-  return READ_ONLY_ROLES.includes(user.role) ? list.filter((p) => VIEW_KEYS.includes(p)) : list;
+  return READ_ONLY_ROLES.includes(user.role) ? list.filter((p) => VIEW_KEYS.includes(p) || PERSONAL_KEYS.includes(p)) : list;
 };
 
 // تنظيف مصفوفة قادمة من الواجهة: نقبل المفاتيح المعروفة فقط، بلا تكرار
@@ -121,6 +127,7 @@ module.exports = {
   ALL_KEYS,
   VIEW_KEYS,
   READ_ONLY_ROLES,
+  PERSONAL_KEYS,
   ROLE_PERMISSIONS,
   effectivePermissionsFor,
   usesCustomPermissions,

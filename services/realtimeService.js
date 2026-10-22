@@ -151,6 +151,7 @@ const init = (server) => {
     let role = decoded.role || 'employee';
     let userName = '';
     let canMonitor = false;
+    let perms = [];
     try {
       const User = require('../models/User');
       const user = await User.findById(decoded.id).select('+sessionId role isActive name username permissions').lean();
@@ -164,7 +165,8 @@ const init = (server) => {
       }
       role = user.role || role;
       userName = user.name || user.username || '';
-      canMonitor = require('../utils/permissions').effectivePermissionsFor(user).includes('center:monitor');
+      perms = require('../utils/permissions').effectivePermissionsFor(user);
+      canMonitor = perms.includes('center:monitor');
     } catch (_) {
       socket.close(1011, 'server error');
       return;
@@ -173,7 +175,7 @@ const init = (server) => {
     // ربما أُغلق الاتصال أثناء قراءة القاعدة
     if (socket.readyState !== 1) return;
 
-    const client = { socket, userId: String(decoded.id), role, sid: decoded.sid || '', canMonitor };
+    const client = { socket, userId: String(decoded.id), role, sid: decoded.sid || '', canMonitor, perms, name: userName };
     clients.add(client);
 
     socket.send(JSON.stringify({ type: 'connected', role }));
@@ -185,12 +187,24 @@ const init = (server) => {
     // لمن يراقب: الحالة الحالية لكل المتصلين فور اتصاله
     if (canMonitor) { try { socket.send(JSON.stringify({ type: 'presence.snapshot', list: presence.snapshot() })); } catch (_) {} }
     socket.on('message', (raw) => {
-      let m; try { m = JSON.parse(String(raw).slice(0, 500)); } catch (_) { return; }
-      if (m && m.type === 'presence') presence.setState(client.userId, m.state);
-      else if (m && m.type === 'bye') presence.bye(client.userId);
+      // رسائل المكالمات تحمل وصف الاتصال (SDP ≈ 2–8KB) — الحد 64KB، وغيرها كما كان
+      const s = String(raw);
+      if (s.length > 65536) return;
+      let m; try { m = JSON.parse(s); } catch (_) { return; }
+      if (!m || typeof m.type !== 'string') return;
+      if (m.type === 'presence') presence.setState(client.userId, m.state);
+      else if (m.type === 'bye') presence.bye(client.userId);
+      else if (/^(call|chat)\./.test(m.type)) { try { require('./chatService').onSocket(client, m); } catch (e) { console.error('chat ws:', e.message); } }
     });
+    // دردشة الطاقم: مكالمة ترنّ له الآن (فتح التطبيق من إشعار الاتصال) + حالة «متصل» لزملائه
+    try { require('./chatService').onConnect(client); } catch (e) { console.error('chat connect:', e.message); }
 
-    const gone = () => { if (clients.delete(client)) presence.disconnect(client.userId, socket); };
+    const gone = () => {
+      if (clients.delete(client)) {
+        presence.disconnect(client.userId, socket);
+        try { require('./chatService').onDisconnect(client); } catch (_) { /* */ }
+      }
+    };
     socket.on('close', gone);
     socket.on('error', gone);
 
@@ -208,12 +222,19 @@ const init = (server) => {
     });
   }, 30000);
 
+  if (interval.unref) interval.unref(); // لا يُبقي العملية حيّة وحده (الخادم يبقيها)
   wss.on('close', () => clearInterval(interval));
 
   // المراقبة: كل تغيّر حضور يصل لمن يملك «مراقبة موظفي السنتر»
   presence.init((event) => {
     const msg = JSON.stringify(event);
     clients.forEach((c) => { if (c.canMonitor && c.socket.readyState === 1) { try { c.socket.send(msg); } catch (_) {} } });
+    // دردشة الطاقم: نقطة «متصل» الخضراء — المعرّف والحالة فقط
+    if (event && event.presence) {
+      const p = event.presence;
+      const chat = JSON.stringify({ type: 'chat.presence', userId: p.userId, online: !!p.online, state: p.state });
+      clients.forEach((c) => { if (c.userId !== p.userId && (c.perms || []).includes('chat:use') && c.socket.readyState === 1) { try { c.socket.send(chat); } catch (_) {} } });
+    }
   });
 
   console.log('🔌 خدمة الوقت الحقيقي (WebSocket) جاهزة على /ws');
@@ -303,6 +324,32 @@ const emitPrintJobUpdated = (job) => broadcast('print.job.updated', { job: seria
 
 const connectedCount = () => clients.size;
 
+/* ── دردشة الطاقم: إرسال لمستخدمين بأعينهم ── */
+const send = (c, payload) => {
+  if (!c || c.socket.readyState !== 1) return false;
+  try { c.socket.send(typeof payload === 'string' ? payload : JSON.stringify(payload)); return true; } catch (_) { return false; }
+};
+/** كل اتصالات مستخدم. */
+const clientsOf = (userId) => [...clients].filter((c) => c.userId === String(userId));
+/** يرسل لكل اتصالات مجموعة مستخدمين (أو filter على الاتصال). يرجع المستخدمين الذين وصلتهم. */
+const sendToUsers = (userIds, payload, filter) => {
+  const ids = userIds ? new Set([...userIds].map(String)) : null;
+  const msg = JSON.stringify(payload);
+  const got = new Set();
+  clients.forEach((c) => {
+    if (ids && !ids.has(c.userId)) return;
+    if (filter && !filter(c)) return;
+    if (send(c, msg)) got.add(c.userId);
+  });
+  return got;
+};
+/** هل التطبيق ظاهر أمام المستخدم الآن (متصل وغير مقفل/في الخلفية)؟ — لا إشعار دفع حينها. */
+const isVisible = (userId) => {
+  const st = presence.stateOf ? presence.stateOf(String(userId)) : null;
+  return !!(st && st.online && st.state === 'active');
+};
+const isOnline = (userId) => clientsOf(userId).some((c) => c.socket.readyState === 1);
+
 /** أُغلق جرد: الخرائط واللوحات المفتوحة تعيد جلب ما تغيّر (طلبات صارت من جرد سابق). */
 const emitShiftClosed = (shiftId, scope) => broadcast('shift.closed', { shiftId, scope });
 
@@ -321,4 +368,9 @@ module.exports = {
   emitPrintJob,
   emitPrintJobUpdated,
   connectedCount,
+  send,
+  clientsOf,
+  sendToUsers,
+  isVisible,
+  isOnline,
 };
