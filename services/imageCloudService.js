@@ -42,9 +42,11 @@ async function activeConfig() {
   if (cache && Date.now() - cacheAt < TTL_MS) return cache.enabled ? cache : null;
   const d = await getDoc({ withKey: true });
   cache = d ? { enabled: !!d.enabled, wantEnabled: !!d.wantEnabled, cloudinaryFallback: !!d.cloudinaryFallback, lastError: d.lastError || '',
-    baseUrl: trimUrl(d.baseUrl), apiKey: d.apiKey || '', projectId: d.projectId || '', keyNodeId: d.keyNodeId || '' } : { enabled: false };
+    baseUrl: trimUrl(d.baseUrl), apiKey: d.apiKey || '', projectId: d.projectId || '', keyNodeId: d.keyNodeId || '',
+    hubNodeId: require('./imageCloudNodes').hubOf(d) } : { enabled: false };
   cacheAt = Date.now();
-  relay.setPreferred(cache.keyNodeId); // النفق يوجّه لصاحب المفتاح أولاً
+  // النفق يوجّه لمركز التزامن أولاً (يعمل دائماً ويملك كل الصور، وليس مشغولاً بالبيع)، وإلا لصاحب المفتاح
+  relay.setPreferred(cache.hubNodeId || cache.keyNodeId);
   return cache.enabled && cache.baseUrl && cache.apiKey ? cache : null;
 }
 /** مفعّلة لكن ناقصة (بلا مفتاح/رابط) — السبب ليُسجَّل بدل الرجوع الصامت لـ Cloudinary. */

@@ -35,8 +35,32 @@ async function doc() {
 
 const peersFor = (nodes, selfId) => nodes.filter((n) => n.nodeId !== selfId && n.lanUrl).map((n) => ({ nodeId: n.nodeId, url: n.lanUrl }));
 
+/** مدير النظام يختار المركز: { mode: 'auto'|'off'|'manual', nodeId } */
+async function setHub(user, body) {
+  const mode = ['auto', 'off', 'manual'].includes(body && body.mode) ? body.mode : 'auto';
+  const d = await doc();
+  const nodeId = String((body && body.nodeId) || '');
+  if (mode === 'manual' && !d.nodes.some((n) => n.nodeId === nodeId)) throw Object.assign(new Error('اختر جهازاً منضماً للمزامنة'), { status: 400 });
+  await ImageCloud.updateOne({ key: 'main' }, { $set: { hubMode: mode, hubNodeId: mode === 'manual' ? nodeId : '', hubSetBy: nameOf(user) } });
+  return hubOf({ ...d, hubMode: mode, hubNodeId: mode === 'manual' ? nodeId : '' });
+}
+
+/**
+ * مركز التزامن الفعّال (معرّف جهاز منضم) أو ''.
+ *   manual ← ما اختاره مدير النظام (إن بقي منضماً)
+ *   auto   ← أول جهاز «مراقبة فقط» انضم (DiyarPOS على جهاز المراقبة)
+ *   off    ← لا مركز: كل جهاز مع كل جهاز
+ */
+function hubOf(d, nodes = d.nodes || []) {
+  const mode = d.hubMode || 'auto';
+  if (mode === 'off') return '';
+  if (mode === 'manual') return nodes.some((n) => n.nodeId === d.hubNodeId) ? d.hubNodeId : '';
+  const mon = nodes.filter((n) => n.kind === 'monitor').sort((a, b) => new Date(a.joinedAt || 0) - new Date(b.joinedAt || 0));
+  return mon.length ? mon[0].nodeId : '';
+}
+
 /** مشكلة الجهاز الآن (نص عربي) أو '' — تُحسب عند العرض وعند كل نبض. */
-function issueOf(n, all, now = Date.now()) {
+function issueOf(n, all, now = Date.now(), hub = '') {
   const seen = n.lastSeen ? new Date(n.lastSeen).getTime() : 0;
   if (!seen || now - seen > OFFLINE_MS) return seen ? `جهاز ${label(n)} لا يرسل حالته منذ ${Math.round((now - seen) / 60000)} دقيقة — مطفأ أو بلا إنترنت` : '';
   if (!n.running) return `خدمة الصور متوقفة على جهاز ${label(n)}`;
@@ -44,6 +68,14 @@ function issueOf(n, all, now = Date.now()) {
     return `جهاز ${label(n)} ينقصه ${n.missingFiles} ملف صورة من الأجهزة الأخرى`;
   }
   const alive = new Set(all.filter((x) => x.lastSeen && now - new Date(x.lastSeen).getTime() < OFFLINE_MS).map((x) => x.nodeId));
+  // بمركز تزامن: الجهاز العادي يتزامن مع المركز وحده — انقطاعه عن المركز هو المشكلة
+  if (hub && n.nodeId !== hub) {
+    const toHub = (n.peers || []).find((p) => p.nodeId === hub);
+    const h = all.find((x) => x.nodeId === hub);
+    if (alive.has(hub) && toHub && !toHub.connected) return `جهاز ${label(n)} لا يصل لمركز التزامن ${label(h || toHub)} — تحقق من الإنترنت على الجهازين`;
+    if (!alive.has(hub)) return '';  // المركز نفسه مطفأ: مشكلته تظهر على المركز
+    return '';
+  }
   const down = (n.peers || []).filter((p) => alive.has(p.nodeId) && !p.connected);
   if (down.length) return `جهاز ${label(n)} لا يتصل بـ ${down.map((p) => label(all.find((x) => x.nodeId === p.nodeId) || p)).join('، ')} — تحقق من الشبكة المحلية والجدار الناري (المنفذ 7443)`;
   return '';
@@ -63,7 +95,7 @@ async function join(user, body) {
   const node = {
     nodeId, name: String(body.name || '').slice(0, 60), machine: String(body.machine || '').slice(0, 60),
     lanUrl: cleanUrl(body.lanUrl), joinedBy: nameOf(user), lastSeen: new Date(), running: true,
-    kind: body.kind === 'server' ? 'server' : 'pos',
+    kind: ['server', 'monitor'].includes(body.kind) ? body.kind : 'pos',
   };
   if (HEX64.test(String(body.proofHash || ''))) node.proofHash = String(body.proofHash);
   const nodes = d.nodes.filter((n) => n.nodeId !== nodeId);
@@ -73,7 +105,7 @@ async function join(user, body) {
   await ImageCloud.updateOne({ key: 'main' }, { $set }, { upsert: true });
   return {
     nodeId, syncSecret: d.syncSecret, signingSecret: d.signingSecret, tunnelToken: d.tunnelToken || '',
-    publicUrl: d.baseUrl || '', projectId: d.projectId || 'diyar', peers: peersFor(nodes, nodeId),
+    publicUrl: d.baseUrl || '', projectId: d.projectId || 'diyar', peers: peersFor(nodes, nodeId), hub: hubOf(d, nodes),
   };
 }
 
@@ -90,6 +122,8 @@ async function heartbeat(body, notify) {
   n.running = body.running !== false;
   if (body.lanUrl) n.lanUrl = cleanUrl(body.lanUrl);
   if (body.name) n.name = String(body.name).slice(0, 60);
+  // DiyarPOS يبلّغ وضعه: كاشير أو «مراقبة فقط» (Mero Server يبقى server)
+  if (['pos', 'monitor'].includes(body.mode) && n.kind !== 'server') n.kind = body.mode;
   n.images = Number(L.images) || 0;
   const missing = Number(L.missingFiles) || 0;
   n.missingSince = missing > 0 ? (n.missingFiles > 0 && n.missingSince ? n.missingSince : now) : null;
@@ -100,15 +134,16 @@ async function heartbeat(body, notify) {
   // إشعار: عند تغيّر حال المشكلة فقط (لا تكرار كل دقيقة) — لكل الأجهزة، فجهاز اختفى
   // يُكتشف من نبض جهاز آخر
   const t = Date.now();
+  const hub = hubOf(d, nodes);
   nodes.forEach((x, i) => {
-    const issue = issueOf(x, nodes, t);
+    const issue = issueOf(x, nodes, t, hub);
     if (issue === (x.issue || '')) return;
     if (issue) notify && notify('imagecloud.alert', { level: 'warn', nodeId: x.nodeId, message: issue });
     else notify && notify('imagecloud.alert', { level: 'ok', nodeId: x.nodeId, message: `✓ جهاز ${label(x)}: المزامنة سليمة ولا ملفات ناقصة` });
     nodes[i] = { ...x, issue };
   });
   await ImageCloud.updateOne({ key: 'main' }, { $set: { nodes } });
-  const out = { peers: peersFor(nodes, nodeId), issue: nodes[idx].issue || '' };
+  const out = { peers: peersFor(nodes, nodeId), issue: nodes[idx].issue || '', hub };
   // جهاز أثبت هويته بسرّه: يستلم الرابط العام ورمز النفق كما ضبطهما المدير من اللوحة
   if (body.proof && sameHash(sha(body.proof), n.proofHash)) out.config = { publicUrl: d.baseUrl || '', tunnelToken: d.tunnelToken || '' };
   return out;
@@ -244,15 +279,16 @@ async function remove(nodeId) {
 }
 
 /** للعرض في اللوحة: الأجهزة وحالة كل منها. */
-function view(nodes) {
+function view(nodes, hub = '') {
   const now = Date.now();
   return (nodes || []).map((n) => ({
     nodeId: n.nodeId, name: n.name, machine: n.machine, lanUrl: n.lanUrl, joinedAt: n.joinedAt, lastSeen: n.lastSeen, kind: n.kind || 'pos',
+    hub: !!hub && n.nodeId === hub,
     online: !!(n.lastSeen && now - new Date(n.lastSeen).getTime() < OFFLINE_MS), running: !!n.running,
     images: n.images || 0, missingFiles: n.missingFiles || 0,
     peers: (n.peers || []).map((p) => ({ nodeId: p.nodeId, connected: !!p.connected, pendingEvents: p.pendingEvents || 0 })),
-    issue: issueOf(n, nodes, now),
+    issue: issueOf(n, nodes, now, hub),
   }));
 }
 
-module.exports = { join, heartbeat, remove, view, issueOf, peersFor, request, decide, claim, requestsView, proven, sha, ID_RX, createPairCode, pair, normCode };
+module.exports = { join, heartbeat, remove, view, issueOf, peersFor, hubOf, setHub, request, decide, claim, requestsView, proven, sha, ID_RX, createPairCode, pair, normCode };

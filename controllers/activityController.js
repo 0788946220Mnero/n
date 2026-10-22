@@ -30,6 +30,7 @@ const ACTIONS = {
   'receivable.pay': 'تسديد ذمة لمورّد',
   'receivable.unpay': 'تراجع عن تسديد ذمة مورّد',
   'receivable.delete': 'إزالة فاتورة مورّد',
+  'imagecloud.hub': 'تغيير مركز تزامن الصور',
   'chat.monitor': 'مراجعة محادثة (مدير النظام)',
   'chat.delete': 'حذف محادثة',
   'chat.message.delete': 'حذف رسالة غيره في الدردشة',

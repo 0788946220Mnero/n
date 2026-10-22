@@ -51,7 +51,8 @@ async function view() {
     cloudinaryUploads: imageCloud.cloudinaryUploads(), // false = Cloudinary موقوف كلياً (مفتاح الرجوع بلا أثر)
     viaRelay: relay.isRelayUrl(d.baseUrl),
     relayDevices: relay.status(),
-    nodes: nodesSvc.view(d.nodes || []),
+    nodes: nodesSvc.view(d.nodes || [], nodesSvc.hubOf(d)),
+    hub: { mode: d.hubMode || 'auto', nodeId: nodesSvc.hubOf(d), setBy: d.hubSetBy || '' },
     requests: nodesSvc.requestsView(d.requests),
     migration: await migration.status(),
   };
@@ -244,6 +245,16 @@ const nodeRemove = async (req, res) => {
   res.json({ success: true, cloud: await view() });
 };
 
+/** مدير النظام يختار مركز التزامن (أو تلقائي/إيقاف). الأجهزة تستلمه مع نبضها التالي (خلال دقيقة). */
+const nodeHub = async (req, res) => {
+  try {
+    const hub = await nodesSvc.setHub(req.user, req.body || {});
+    imageCloud.invalidate(); // النفق يخدم الزبائن من المركز أولاً
+    require('../utils/activity').logActivity({ req, action: 'imagecloud.hub', details: { mode: (req.body || {}).mode || 'auto', hub } });
+    res.json({ success: true, cloud: await view() });
+  } catch (err) { return fail(res, err); }
+};
+
 /** مدير النظام يولّد رمز اقتران لـ«Mero Server» المستقل (30 دقيقة، مرة واحدة). */
 const pairCode = async (req, res) => {
   const out = await nodesSvc.createPairCode(req.user);
@@ -421,4 +432,4 @@ const syncNow = async (req, res) => {
 
 const relayStatus = async (req, res) => res.json({ success: true, devices: relay.status(), cache: relay.cacheStats() });
 
-module.exports = wrapAll({ get, update, test, migrateStatus, migrateStart, nodeJoin, nodeHeartbeat, nodeRemove, nodeRequest, nodeDecide, nodeClaim, relayStatus, nodeKey, diagnose, pairCode, nodePair, syncNow });
+module.exports = wrapAll({ nodeHub, get, update, test, migrateStatus, migrateStart, nodeJoin, nodeHeartbeat, nodeRemove, nodeRequest, nodeDecide, nodeClaim, relayStatus, nodeKey, diagnose, pairCode, nodePair, syncNow });

@@ -31,6 +31,11 @@ const imageCloudSchema = new mongoose.Schema(
     syncSecret: { type: String, default: '', select: false },
     signingSecret: { type: String, default: '', select: false },
     tunnelToken: { type: String, default: '', select: false },
+    // ═══ مركز التزامن: كل جهاز يتزامن عبر السيرفر مع المركز وحده، والمركز مع الجميع — ويُخدم الزبائن منه أولاً ═══
+    //   auto ← أول جهاز في وضع «مراقبة فقط» يصبح المركز تلقائياً | manual ← اختاره مدير النظام | off ← كل جهاز مع كل جهاز
+    hubMode: { type: String, enum: ['auto', 'manual', 'off'], default: 'auto' },
+    hubNodeId: { type: String, default: '' },
+    hubSetBy: { type: String, default: '' },
     nodes: [{
       _id: false,
       nodeId: { type: String, required: true },
@@ -47,7 +52,8 @@ const imageCloudSchema = new mongoose.Schema(
       peers: [{ _id: false, nodeId: String, connected: Boolean, pendingEvents: Number, lastError: String }],
       issue: { type: String, default: '' },         // آخر مشكلة أُبلغ عنها (لإشعار مرة واحدة)
       proofHash: { type: String, default: '' },     // بصمة سر الجهاز — يثبت هويته في النبض
-      kind: { type: String, enum: ['pos', 'server'], default: 'pos' }, // server = «Mero Server» المستقل (بلا بيع ولا طباعة)
+      // server = «Mero Server» المستقل؛ monitor = DiyarPOS في وضع «مراقبة فقط» (مركز صور + لوحة، بلا بيع ولا طباعة)
+      kind: { type: String, enum: ['pos', 'server', 'monitor'], default: 'pos' },
     }],
     // ═══ رموز اقتران «Mero Server» المستقل: يولّدها مدير النظام، تُستعمل مرة واحدة خلال 30 دقيقة ═══
     pairCodes: {

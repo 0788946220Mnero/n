@@ -42,6 +42,7 @@ router.post('/nodes/pair', pairLimiter, c.nodePair);              // الخاد�
 router.post('/nodes/request', protect, c.nodeRequest);            // DiyarPOS يطلب الربط (أي حساب)
 router.post('/nodes/claim', userOrDevice, c.nodeClaim);           // الجهاز المُوافَق عليه يستلم (يثبت هويته بسرّه)
 router.post('/nodes/key', userOrDevice, c.nodeKey);               // الجهاز يرسل مفتاحه حين يطلبه الخادم (بسرّه)
+router.put('/nodes/hub', protect, admin, c.nodeHub);                // مركز التزامن: تلقائي / جهاز بعينه / إيقاف
 router.post('/nodes/:nodeId/decide', protect, admin, c.nodeDecide); // موافقة/رفض المدير
 router.delete('/nodes/:nodeId', protect, admin, c.nodeRemove);
 router.get('/relay-status', protect, admin, c.relayStatus);
