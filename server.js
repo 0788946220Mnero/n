@@ -176,6 +176,7 @@ server.listen(PORT, () => {
   // التقرير الحي: تحديث دوري أثناء الدوام (كل 15 دقيقة افتراضياً)
   try { require('./services/liveReportService').start(); } catch (e) { console.error('liveReport:', e.message); }
   try { require('./services/chatService').start(); } catch (e) { console.error('chat:', e.message); } // دردشة الطاقم: مدة الاحتفاظ بالوسائط
+  try { require('./services/permissionMigrations').start(); } catch (e) { console.error('permissions migration:', e.message); } // المبيعات وإغلاق الجرد لمدير النظام: مرة واحدة
   try { require('./services/obligationService').start(); } catch (e) { console.error('obligations:', e.message); } // الالتزامات الثابتة: الإغلاق والتصدير وتنبيه الأيام الفائتة
 });
 

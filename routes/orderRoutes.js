@@ -45,10 +45,11 @@ router.get('/blocked-list', protect, getBlockedPhones);
 router.post('/block', protect, authorize('admin', 'manager', 'cashier'), blockPhone);
 router.delete('/block/:phone', protect, authorize('admin', 'manager', 'cashier'), unblockPhone);
 
-// الجرد لكل مستخدم: الكاشير يُغلق جرده هو، والمدير يستطيع جرد المطعم كاملاً
-router.get('/shift-summary', protect, getShiftSummary);
+// إغلاق الجرد ومعاينته: لمدير النظام افتراضياً (orders:closeShift)، ويُغلق جرده أو جرد مستخدم معيّن أو المطعم كاملاً؛
+// ومن يُمنحها يُغلق جرده هو. أرقام الجرد مبيعات: لا تظهر لمن لا يملكها.
+router.get('/shift-summary', protect, requirePermission('orders:closeShift'), getShiftSummary);
 router.get('/shift-overview', protect, authorizeOr(['admin', 'manager'], ['shifts:view']), getShiftOverview); // + مراقب البيانات
-router.post('/close-shift', protect, authorize('admin', 'manager', 'cashier'), closeShift);
+router.post('/close-shift', protect, requirePermission('orders:closeShift'), closeShift);
 
 // الزبون: تتبع طلبه وسجل طلباته — قبل /:id
 router.post('/track', trackLimiter, trackBatch);
@@ -62,7 +63,7 @@ router.post('/track/:id/request', requestLimiter, createRequest);
 
 // المندوبون: القائمة قبل /:id حتى لا تُفسَّر «drivers» معرّفاً
 router.get('/drivers', protect, getDrivers);
-router.get('/stats/dashboard', protect, getDashboardStats);
+router.get('/stats/dashboard', protect, requirePermission('stats:view'), getDashboardStats); // مبيعات اليوم والشهر
 router.get('/', protect, getOrders);
 router.get('/:id', protect, getOrder);
 router.post('/', createOrder); // يمكن إنشاؤه من الموقع العام بدون توكن — يُنشأ دائماً بحالة "معلّق"

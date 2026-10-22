@@ -24,6 +24,7 @@ const ACTIONS = {
   'presence.back': 'عاد للصفحة',
   'shift.open': 'فتح الجرد',
   'shift.close': 'إغلاق الجرد',
+  'permissions.sales': 'سحب صلاحيات المبيعات وإغلاق الجرد (تحديث النظام — امنحها من «المستخدمون»)',
   'expense.create': 'تسجيل مصروف',
   'expense.void': 'إلغاء مصروف',
   'receivable.create': 'تسجيل فاتورة مورّد (ذمة على المطعم)',

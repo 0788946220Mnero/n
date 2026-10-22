@@ -67,6 +67,12 @@ const mapLink = (lat, lng) =>
 
 // GET /api/orders?status=new&page=1&limit=10
 const getOrders = async (req, res) => {
+  /* المبيعات لمن يملكها: سجل الطلبات (المؤرشفة/دورة جرد سابقة) ومبيعاتي السفري.
+     «حالة الطلبات» المفتوحة تبقى لمن يعمل عليها. */
+  const salesQuery = req.query.includeClosed === 'true' || !!req.query.shiftId || req.query.mine === 'true';
+  if (salesQuery && !hasPermission(req.user, 'orders:view') && !hasPermission(req.user, 'shifts:view')) {
+    return res.status(403).json({ success: false, message: 'عرض المبيعات يحتاج صلاحية «عرض المبيعات» من مدير النظام' });
+  }
   const page = parseInt(req.query.page) || 1;
   const limit = parseInt(req.query.limit) || 10;
   const skip = (page - 1) * limit;
@@ -1202,7 +1208,9 @@ const expenseFilter = (user, scope) => {
 
 const buildShiftSummary = async (filter) => summarizeOrders(await Order.find(filter).lean());
 
-const canCloseAll = (user) => !!user && ['admin', 'manager'].includes(user.role);
+/* إغلاق جرد غيره (مستخدم معيّن أو المطعم كاملاً): مدير النظام، أو مدير مُنح «إغلاق الجرد».
+   ومن يُمنحها من غيرهما يُغلق جرده هو فقط. */
+const canCloseAll = (user) => !!user && (user.role === 'admin' || (user.role === 'manager' && hasPermission(user, 'orders:closeShift')));
 
 /**
  * طلبات جرد مستخدم: ما تعامل معه هو، إضافة لطلبات ما قبل تفعيل الميزة
@@ -1246,9 +1254,25 @@ const deliveryLedgerFilter = (brand) => {
 const loadDeliveryLedger = (user, scope, brand) =>
   canSettleDelivery(user, scope) ? Order.find(deliveryLedgerFilter(brand)).lean() : Promise.resolve(null);
 
-const resolveScope = (user, requested) => (requested === 'all' && canCloseAll(user) ? 'all' : 'mine');
+const resolveScope = (user, requested) => (['all', 'user'].includes(requested) && canCloseAll(user) ? requested : 'mine');
 
-// GET /api/orders/shift-summary?scope=mine|all — معاينة الجرد قبل الإغلاق (لا تُغيّر شيئاً)
+/**
+ * صاحب الجرد: المستخدم نفسه، أو «مستخدم معيّن» يختاره مدير النظام (يُغلق جرده عند تسليم الوردية).
+ * يرجع { scope, owner } أو يرمي خطأً برسالة عربية.
+ */
+const resolveOwner = async (user, requested, userId) => {
+  const scope = resolveScope(user, requested);
+  if (scope !== 'user') return { scope, owner: user };
+  if (!userId || !mongoose.Types.ObjectId.isValid(String(userId))) throw Object.assign(new Error('اختر المستخدم الذي تُغلق جرده'), { status: 400 });
+  if (String(userId) === String(user._id)) return { scope: 'mine', owner: user };
+  const owner = await require('../models/User').findById(userId).select('name username role').lean();
+  if (!owner) throw Object.assign(new Error('المستخدم غير موجود'), { status: 404 });
+  return { scope, owner };
+};
+// ملخص «مستخدم معيّن» هو ملخص جرده هو (نطاق mine على صاحبه)
+const ownerScope = (scope) => (scope === 'all' ? 'all' : 'mine');
+
+// GET /api/orders/shift-summary?scope=mine|user|all&userId= — معاينة الجرد قبل الإغلاق (لا تُغيّر شيئاً)
 /** ملخص الجرد المفتوح — نفس أرقام تقرير الجرد (يستخدمه أيضاً التقرير الحي على شاشة القفل). */
 const shiftSummaryFor = async (user, scope = 'all', brand) => {
   const [orders, expenses, delivery, collections] = await Promise.all([
@@ -1264,14 +1288,15 @@ const shiftSummaryFor = async (user, scope = 'all', brand) => {
 
 const getShiftSummary = async (req, res) => {
   try {
-    const scope = resolveScope(req.user, req.query.scope);
-    const summary = await shiftSummaryFor(req.user, scope, req.query.brand);
+    const { scope, owner } = await resolveOwner(req.user, req.query.scope, req.query.userId);
+    const summary = await shiftSummaryFor(owner, ownerScope(scope), req.query.brand);
     res.json({
       success: true,
-      summary: { ...summary, scope, userName: scope === 'all' ? 'جرد المطعم كاملاً' : handlerName(req.user) },
+      summary: { ...summary, scope, userId: scope === 'user' ? String(owner._id) : undefined, userName: scope === 'all' ? 'جرد المطعم كاملاً' : handlerName(owner) },
       canCloseAll: canCloseAll(req.user),
     });
   } catch (err) {
+    if (err.status) return res.status(err.status).json({ message: err.message });
     res.status(500).json({ message: 'تعذر حساب ملخص الجرد', error: err.message });
   }
 };
@@ -1318,6 +1343,10 @@ const userSummaries = (orders, expenses, collections = []) =>
     .sort((a, b) => b.successTotal - a.successTotal);
 
 const getShiftOverview = async (req, res) => {
+  // أرقام جرد كل مستخدم: لمن يُغلق جرد غيره، ولمن يملك «سجل الجرد» (مراقب البيانات)
+  if (!canCloseAll(req.user) && !hasPermission(req.user, 'shifts:view')) {
+    return res.status(403).json({ success: false, message: 'ليس لديك صلاحية للقيام بهذا الإجراء' });
+  }
   try {
     const f = { closed: { $ne: true } };
     if (req.query.brand) f.brand = req.query.brand;
@@ -1350,12 +1379,16 @@ const closeShift = async (req, res) => {
     const ok = await user.comparePassword(password);
     if (!ok) return res.status(401).json({ message: 'كلمة المرور غير صحيحة' });
 
-    const scope = resolveScope(req.user, req.body.scope);
+    let scope; let owner;
+    try { ({ scope, owner } = await resolveOwner(req.user, req.body.scope, req.body.userId)); } catch (e) {
+      return res.status(e.status || 400).json({ message: e.message });
+    }
+    const os = ownerScope(scope);
     const [orders, expenses, delivery, collections] = await Promise.all([
-      Order.find(shiftFilter(req.user, scope, brand)).lean(),
-      Expense.find(expenseFilter(req.user, scope)).lean(),
-      loadDeliveryLedger(req.user, scope, brand),
-      loadCollections(req.user, scope),
+      Order.find(shiftFilter(owner, os, brand)).lean(),
+      Expense.find(expenseFilter(owner, os)).lean(),
+      loadDeliveryLedger(req.user, os, brand),
+      loadCollections(owner, os),
     ]);
     if (orders.length === 0 && expenses.length === 0 && !collections.length && !(delivery && delivery.length)) {
       return res.status(400).json({ message: 'لا توجد طلبات ولا مصروفات لإغلاقها حالياً' });
@@ -1366,7 +1399,7 @@ const closeShift = async (req, res) => {
     if (scope === 'all') summary.byUser = userSummaries(orders, expenses, collections);
     /* الدورة: جرد المستخدم يُغلق دورته المفتوحة (تُفتح الآن إن لم يفتحها)، فيبقى
        المعرّف نفسه من الفتح إلى الإغلاق. جرد المطعم كاملاً دورة مستقلة. */
-    const openSession = scope === 'all' ? null : await ensureOpenSession(req.user, { auto: true });
+    const openSession = scope === 'all' ? null : await ensureOpenSession(owner, { auto: true });
     const shiftId = openSession ? openSession.shiftId : newShiftId(user, 'all');
 
     /* الأرشفة بالمعرّفات نفسها التي حُسب منها الملخص: طلب يصل أثناء
@@ -1394,7 +1427,7 @@ const closeShift = async (req, res) => {
       );
     }
 
-    const userName = scope === 'all' ? 'جرد المطعم كاملاً' : handlerName(req.user);
+    const userName = scope === 'all' ? 'جرد المطعم كاملاً' : handlerName(owner);
 
     // حفظ الدورة: من أغلق ومتى، وملخص الأرقام كما طُبع — لا يُمسح بفتح دورة جديدة
     try {
@@ -1429,16 +1462,16 @@ const closeShift = async (req, res) => {
         );
       } catch (e) { console.error('أرشفة تحصيل الذمم تعذّرت:', e.message); }
     }
-    logActivity({ req, action: 'shift.close', amount: summary.successTotal, details: { shiftId, scope, ordersCount: summary.successCount } });
+    logActivity({ req, action: 'shift.close', amount: summary.successTotal, details: { shiftId, scope, ordersCount: summary.successCount, ...(scope === 'user' ? { forUser: handlerName(owner) } : {}) } });
     try { realtime.emitShiftClosed(shiftId, scope); } catch (_) { /* البث لا يُفشل الإغلاق */ }
 
-    console.log(`📊 إغلاق جرد ${shiftId} بواسطة ${user.username} (${scope}) — محقق: ${summary.successCount} (${summary.successTotal}) | معلّقة: ${summary.pendingCount} | ملغاة: ${summary.cancelledCount} | مصروفات: ${summary.expensesTotal} | توصيل للمندوبين: ${summary.deliveryCount} (${summary.deliveryTotal})`);
+    console.log(`📊 إغلاق جرد ${shiftId} بواسطة ${user.username} (${scope}${scope === 'user' ? `: ${owner.username || ''}` : ''}) — محقق: ${summary.successCount} (${summary.successTotal}) | معلّقة: ${summary.pendingCount} | ملغاة: ${summary.cancelledCount} | مصروفات: ${summary.expensesTotal} | توصيل للمندوبين: ${summary.deliveryCount} (${summary.deliveryTotal})`);
 
     res.json({
       success: true,
       shiftId,
       summary: { ...summary, scope, userName },
-      message: 'تم إغلاق الجرد',
+      message: scope === 'user' ? `تم إغلاق جرد ${userName}` : 'تم إغلاق الجرد',
     });
   } catch (err) {
     res.status(500).json({ message: 'تعذر إغلاق الجرد', error: err.message });

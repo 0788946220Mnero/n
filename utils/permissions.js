@@ -16,9 +16,9 @@
 
 const PERMISSIONS = [
   { key: 'stats:view', label: 'عرض لوحة المعلومات والإحصائيات', view: true },
-  { key: 'orders:view', label: 'عرض الطلبات والمبيعات', view: true },
+  { key: 'orders:view', label: 'عرض المبيعات: سجل الطلبات ومبيعات السفري', view: true },
   { key: 'orders:manage', label: 'تأكيد الطلبات وتغيير حالتها' },
-  { key: 'orders:closeShift', label: 'إغلاق الجرد (تقرير الوردية)' },
+  { key: 'orders:closeShift', label: 'إغلاق الجرد — لمدير النظام افتراضياً، ومن يُمنحها يُغلق جرده هو' },
   { key: 'products:view', label: 'عرض الأصناف', view: true },
   { key: 'products:edit', label: 'إضافة وتعديل وحذف الأصناف' },
   { key: 'categories:edit', label: 'إدارة التصنيفات' },
@@ -62,17 +62,18 @@ const VIEW_KEYS = PERMISSIONS.filter((p) => p.view).map((p) => p.key);
 const READ_ONLY_ROLES = ['observer'];
 // مفاتيح شخصية لا تعدّل بيانات المطعم: مسموحة لمراقب البيانات أيضاً (دردشته ومكالماته)
 const PERSONAL_KEYS = PERMISSIONS.filter((p) => p.personal).map((p) => p.key);
+// المبيعات وإغلاق الجرد: لمدير النظام وحده افتراضياً (ومراقب البيانات بدوره)، ويمنحها لغيره صراحةً
+const SALES_KEYS = ['orders:closeShift', 'orders:view', 'stats:view', 'shifts:view'];
 
 const ROLE_PERMISSIONS = {
   admin: [...ALL_KEYS],
   // رأس المال لمدير النظام وحده افتراضياً (يُمنح لغيره من «المستخدمون» عند الحاجة)
   // رأس المال وصرف الموظفين: لمدير النظام افتراضياً، ويُمنحان لغيره من «المستخدمون»
   // والأوامر الصوتية: لمدير النظام افتراضياً، ويمنحها لمن يريد
-  manager: ALL_KEYS.filter((k) => !['users:manage', 'capital:manage', 'capital:view', 'employees:pay', 'voice:commands', 'stats:live', 'images:cloud', 'staff:notify', 'obligations:manage', 'chat:monitor'].includes(k)),
+  // المبيعات وإغلاق الجرد: لمدير النظام وحده افتراضياً، ويمنحها لمن يريد
+  manager: ALL_KEYS.filter((k) => !['users:manage', 'capital:manage', 'capital:view', 'employees:pay', 'voice:commands', 'stats:live', 'images:cloud', 'staff:notify', 'obligations:manage', 'chat:monitor', ...SALES_KEYS].includes(k)),
   cashier: [
-    'orders:view',
-    'orders:manage',
-    'orders:closeShift', // الجرد لكل مستخدم: الكاشير يُغلق جرده هو
+    'orders:manage', // يعمل على «حالة الطلبات» ويبيع — بلا سجل مبيعات ولا إغلاق جرد
     'products:view',
     'customers:view',
     'customers:manage',
@@ -85,7 +86,7 @@ const ROLE_PERMISSIONS = {
     'obligations:pay', // الالتزامات الثابتة: دفع قسط اليوم من صندوقه
     'chat:use', 'chat:calls', // دردشة الطاقم
   ],
-  employee: ['orders:view', 'products:view', 'center:sell', 'chat:use', 'chat:calls'],
+  employee: ['products:view', 'center:sell', 'chat:use', 'chat:calls'],
   // موظف سنتر (من المنزل): يستقبل الاتصالات ويرسل الطلبات للمطعم فقط —
   // لا دفع ولا إلغاء ولا بيع سفري ولا قوائم الطلبات والزبائن (يفرضه الخادم أيضاً)
   center: ['center:sell', 'chat:use', 'chat:calls'],
@@ -128,6 +129,7 @@ module.exports = {
   VIEW_KEYS,
   READ_ONLY_ROLES,
   PERSONAL_KEYS,
+  SALES_KEYS,
   ROLE_PERMISSIONS,
   effectivePermissionsFor,
   usesCustomPermissions,
