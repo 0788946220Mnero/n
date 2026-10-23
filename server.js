@@ -126,6 +126,9 @@ app.use('/api/image-cloud', (req, res, next) => {
 });
 app.use('/api/image-cloud', require('./routes/imageCloudRoutes')); // سحابة الصور الخاصة (ImageStorage داخل DiyarPOS) — مدير النظام
 app.use('/api/loyalty', require('./routes/loyaltyRoutes')); // الولاء: محفظة الزبون، الكاشير، الإدارة، Apple Wallet Web Service
+app.use('/api/offers', require('./routes/offerRoutes')); // العروض الترويجية: روابط بمعاينة تفتح صنفاً أو تصنيفاً بخصم ثابت
+// صفحة مشاركة العرض: وسوم og لفيسبوك وواتساب (الموقع على Netlify يمرّر /o/* إلى هنا)
+app.get('/o/:code', require('./controllers/offerController').sharePage);
 
 // فحص صحة الخادم — يفيد أيضاً لاختبار CORS من المتصفح
 // RAILWAY / DUAL-CONNECTION: «الخادم يرد» لا يعني أن قاعدة البيانات تعمل — db تفحصها فعلاً (ping بمهلة ثانيتين).

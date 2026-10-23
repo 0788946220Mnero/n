@@ -26,6 +26,7 @@ const PERMISSIONS = [
   { key: 'customers:manage', label: 'توثيق وتعديل بيانات الزبائن' },
   { key: 'printers:manage', label: 'إدارة الطابعات والطباعة' },
   { key: 'settings:manage', label: 'إعدادات المطعم والعروض' },
+  { key: 'offers:manage', label: 'العروض الترويجية: إنشاؤها بصورة أو فيديو وخصم ثابت، ونسخ روابطها للنشر على فيسبوك وواتساب' },
   { key: 'users:manage', label: 'إدارة المستخدمين والصلاحيات' },
   { key: 'delivery:manage', label: 'نظام التوصيل: الخريطة وتعيين المندوبين وسجل التوصيل' },
   { key: 'activity:view', label: 'سجل نشاط المستخدمين', view: true },

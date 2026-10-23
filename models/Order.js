@@ -10,6 +10,9 @@ const orderItemSchema = new mongoose.Schema(
     // طابعة القسم وقت إنشاء الطلب (تُنسخ من المنتج لتبقى ثابتة لاحقاً)
     printerName: { type: String, default: '' },
     notes: { type: String, default: '' },
+    // عرض ترويجي طُبّق على السطر (اختياري): الخصم الثابت لكل قطعة — price بعده
+    offer: { type: mongoose.Schema.Types.ObjectId, ref: 'Offer' },
+    offerDiscount: { type: Number },
   },
   { _id: false }
 );

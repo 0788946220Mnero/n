@@ -9,6 +9,10 @@
     • الإضافة غير المعرّفة على المنتج ← تُحذف (لا سعر من الجهاز).
     • الكمية عدد صحيح بين 1 و maxQty.
     • اسم الصنف وطابعته من المنتج، لا من الجهاز.
+    • عرض ترويجي (line.offer): يُقرأ من قاعدة البيانات — إن كان فعّالاً ويخص هذا الصنف
+      (أو تصنيفه) يُطرح خصمه الثابت من سعر الصنف الأساسي (لا الإضافات، ولا أقل من صفر).
+      عرض انتهى أو أُوقف ← يُرفض الطلب (OFFER_ENDED) حتى يرى الزبون السعر الجديد قبل الإرسال.
+      عرض لا يخص الصنف ← يُتجاهل (السعر العادي).
 
   ترجع: { items, itemsTotal } أو { error, code, names }.
   أخطاء قاعدة البيانات لا تُبتلع هنا — تصعد لمعالجها فيفشل الطلب بدل أن
@@ -29,9 +33,16 @@ const priceOrderItems = async (rawItems, { maxQty = 999, maxNoteLength = 300 } =
     .map((l) => l.product)
     .filter((id) => id && mongoose.Types.ObjectId.isValid(id));
   const products = validIds.length
-    ? await Product.find({ _id: { $in: validIds } }).select('nameAr price addons isAvailable printerName').lean()
+    ? await Product.find({ _id: { $in: validIds } }).select('nameAr price addons isAvailable printerName category').lean()
     : [];
   const byId = new Map(products.map((p) => [String(p._id), p]));
+
+  const offerIds = [...new Set(lines.map((l) => l.offer).filter((id) => id && mongoose.Types.ObjectId.isValid(String(id))).map(String))];
+  const Offer = offerIds.length ? require('../models/Offer') : null;
+  const offers = offerIds.length ? await Offer.find({ _id: { $in: offerIds } }).lean() : [];
+  const offerById = new Map(offers.map((o) => [String(o._id), o]));
+  const now = new Date();
+  const ended = [];
 
   const missing = [];
   const unavailable = [];
@@ -55,14 +66,30 @@ const priceOrderItems = async (rawItems, { maxQty = 999, maxNoteLength = 300 } =
       .filter((n) => known.has(n) && !picked.has(n) && picked.add(n))
       .map((n) => ({ name: n, price: known.get(n) }));
 
+    // العرض الترويجي: من قاعدة البيانات فقط
+    let base = p.price; let offerRef = null; let offerDiscount = 0;
+    const o = line.offer ? offerById.get(String(line.offer)) : null;
+    if (line.offer && mongoose.Types.ObjectId.isValid(String(line.offer))) {
+      const applies = o && (o.targetType === 'category'
+        ? o.category && String(o.category) === String(p.category)
+        : o.product && String(o.product) === String(p._id));
+      if (!o || (applies && !Offer.isLive(o, now))) ended.push(o ? o.title : p.nameAr);
+      else if (applies) {
+        offerDiscount = round3(Math.min(p.price, Number(o.discount || 0)));
+        base = round3(p.price - offerDiscount);
+        offerRef = o._id;
+      }
+    }
+
     items.push({
       product: p._id,
       nameAr: p.nameAr,
       quantity: clampQty(line.quantity || line.qty, maxQty),
-      price: round3(p.price + addons.reduce((t, a) => t + a.price, 0)),
+      price: round3(base + addons.reduce((t, a) => t + a.price, 0)),
       addons,
       notes: String(line.notes || '').slice(0, maxNoteLength),
       printerName: p.printerName || '',
+      ...(offerRef ? { offer: offerRef, offerDiscount } : {}),
     });
   }
 
@@ -71,6 +98,14 @@ const priceOrderItems = async (rawItems, { maxQty = 999, maxNoteLength = 300 } =
       error: `عذراً، أصبح غير متوفر حالياً: ${unavailable.join('، ')}. الرجاء تعديل طلبك.`,
       code: 'ITEM_UNAVAILABLE',
       names: unavailable,
+    };
+  }
+  if (ended.length) {
+    const names = [...new Set(ended)];
+    return {
+      error: `انتهى العرض: ${names.join('، ')}. حدّثنا السعر في سلتك — راجع المجموع ثم أرسل الطلب.`,
+      code: 'OFFER_ENDED',
+      names,
     };
   }
   if (missing.length) {

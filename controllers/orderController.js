@@ -363,6 +363,11 @@ const createOrder = async (req, res) => {
     // بثّ فوري لتطبيق الإدارة + إشعار FCM (لا يعطّلان إنشاء الطلب إن فشلا)
     try { realtime.emitOrderCreated(order); } catch (e) { console.error('realtime emit failed:', e.message); }
     pushService.notifyNewOrder(order).catch((e) => console.error('push failed:', e.message));
+    // العروض الترويجية: عدّاد الطلبات لكل عرض استُخدم (لا ينتظر)
+    {
+      const used = [...new Set(normalizedItems.filter((i) => i.offer).map((i) => String(i.offer)))];
+      if (used.length) require('../models/Offer').updateMany({ _id: { $in: used } }, { $inc: { orders: 1 } }).catch(() => {});
+    }
     // إشعارات الطاقم: طلب جديد من الموقع (لمن اختارهم مدير النظام)
     require('../services/staffAlertService').emit('order.new', { userName: customerName, amount: order.total, orderNumber: order.orderNumber }, order);
 
