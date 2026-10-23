@@ -1391,7 +1391,9 @@ const closeShift = async (req, res) => {
       loadCollections(owner, os),
     ]);
     if (orders.length === 0 && expenses.length === 0 && !collections.length && !(delivery && delivery.length)) {
-      return res.status(400).json({ message: 'لا توجد طلبات ولا مصروفات لإغلاقها حالياً' });
+      return res.status(400).json({ message: os !== 'all' && canCloseAll(req.user)
+        ? `لا توجد طلبات ولا مصروفات في جرد ${scope === 'user' ? handlerName(owner) : 'حسابك'} — اختر «المطعم كاملاً» أو «مستخدم معيّن»`
+        : 'لا توجد طلبات ولا مصروفات لإغلاقها حالياً' });
     }
 
     const summary = summarizeOrders(orders, expenses, delivery, collections);
