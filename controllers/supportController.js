@@ -114,6 +114,28 @@ async function pushCustomer(thread, text) {
     }
   } catch (e) { console.error('support push:', e.message); }
 }
+/** إشعار دفع قوي لأجهزة الطاقم (شاشة القفل) لمن اللوحة ليست أمامه:
+    المحادثة المعيّنة لموظف تصله هو، وغير المعيّنة تصل كل من يملك «رسائل الزبائن». */
+async function pushStaff(thread, msg) {
+  try {
+    const live = require('../services/liveReportService');
+    if (!live.enabled || !live.enabled()) return;
+    const rt = require('../services/realtimeService');
+    const { ids } = await supportStaff();
+    let to = thread.assignedTo && ids.includes(String(thread.assignedTo)) ? [String(thread.assignedTo)] : ids;
+    to = to.filter((id) => !(rt.isVisible && rt.isVisible(id)));
+    if (!to.length) return;
+    const StaffDevice = require('../models/StaffDevice');
+    const devices = await StaffDevice.find({ user: { $in: to } }).lean();
+    if (!devices.length) return;
+    await require('../services/staffAlertService').pushTo(devices, {
+      title: `💬 رسالة من زبون: ${thread.name || localJo(thread.phone)}`,
+      body: preview(msg) || '📷 صورة',
+      url: `dashboard.html#support/${thread._id}`, tag: `diyar-support-${thread._id}`, type: 'support.message',
+    });
+  } catch (e) { console.error('support staff push:', e.message); }
+}
+
 /** رسالة من الطاقم أو النظام وصلت للزبون: لحظياً إن كان متصلاً، وإلا إشعار دفع. */
 function deliverToCustomer(thread, m) {
   const n = cr().sendToCustomer(thread.phoneUser, { type: 'support.message', message: forCustomer(m) });
@@ -146,6 +168,7 @@ async function afterCustomerMessage(thread, msg, name) {
   await SupportThread.updateOne({ _id: thread._id }, { $set: set, $inc: { unreadStaff: 1 } });
   let fresh = await SupportThread.findById(thread._id).lean();
   notifyStaff('support.message', { thread: threadView(fresh), message: forStaff(msg) });
+  setImmediate(() => pushStaff(fresh, msg));
 
   let auto = null;
   const s = await settings();

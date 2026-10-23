@@ -256,26 +256,53 @@ async function invite(client, m) {
   call.timer = setTimeout(() => finish(call, 'missed', 'no-answer'), RING_MS);
   const got = rt().sendToUsers([to], { type: 'call.incoming', ...callOut(call), sdp });
   rt().send(client, { type: 'call.ringing', ...callOut(call), delivered: got.size > 0 });
-  if (!rt().isVisible(to)) {
-    setImmediate(async () => {
-      try {
-        const live = require('./liveReportService');
-        if (!live.enabled()) return;
-        const devices = await require('../models/StaffDevice').find({ user: to }).lean();
-        await require('./staffAlertService').pushTo(devices, {
-          title: `📞 ${video ? 'مكالمة فيديو' : 'مكالمة صوتية'} من ${call.fromName}`, body: 'اضغط للرد',
-          url: `dashboard.html#chat/call/${call.id}`, tag: `diyar-call-${call.id}`, type: 'chat.call',
-        });
-      } catch (e) { console.error('call push:', e.message); }
-    });
-  }
+  startRingPush(call);
   return call;
+}
+
+/* ── الرنين على شاشة القفل: إشعار المكالمة يتكرر كل 6 ثوانٍ (بالوسم نفسه + renotify) طوال الرنين،
+      فيرن الهاتف مرة بعد مرة بدل تنبيه واحد يمر — ويتوقف فور الرد أو الرفض أو الإلغاء أو فتح التطبيق. ── */
+const RING_PUSH_MS = Number(process.env.CHAT_RING_PUSH_MS || 6000);
+async function callDevices(call) {
+  const live = require('./liveReportService');
+  if (!live.enabled()) return [];
+  return require('../models/StaffDevice').find({ user: call.to }).lean();
+}
+function startRingPush(call) {
+  const tick = async () => {
+    if (calls.get(call.id) !== call || call.state !== 'ringing') return stopRingPush(call);
+    if (rt().isVisible(call.to)) return; // التطبيق أمامه: يرن داخله (شاشة المكالمة)
+    try {
+      const devices = await callDevices(call);
+      if (!devices.length || calls.get(call.id) !== call || call.state !== 'ringing') return;
+      call.pushed = true;
+      await require('./staffAlertService').pushTo(devices, {
+        title: `📞 ${call.video ? 'مكالمة فيديو' : 'مكالمة صوتية'} من ${call.fromName}`, body: 'يرن الآن — اضغط للرد',
+        url: `dashboard.html#chat/call/${call.id}`, tag: `diyar-call-${call.id}`, type: 'chat.call',
+      });
+    } catch (e) { console.error('call push:', e.message); }
+  };
+  setImmediate(tick);
+  call.ringPush = setInterval(tick, RING_PUSH_MS);
+  if (call.ringPush.unref) call.ringPush.unref();
+}
+function stopRingPush(call) { if (call.ringPush) { clearInterval(call.ringPush); call.ringPush = null; } }
+/** يُستبدل إشعار الرنين على أجهزة المتصَل به («انتهت») — فلا يبقى يرن بعد الرد من جهاز آخر أو الإلغاء. */
+async function endRingPush(call, text) {
+  stopRingPush(call);
+  if (!call.pushed) return;
+  try {
+    const devices = await callDevices(call);
+    if (devices.length) await require('./staffAlertService').pushTo(devices, { title: `📞 ${call.fromName}`, body: text, url: `dashboard.html#chat/${call.conversation}`, tag: `diyar-call-${call.id}`, type: 'chat.call.end' });
+  } catch (e) { console.error('call end push:', e.message); }
 }
 
 /** تنتهي المكالمة: تُحذف من الذاكرة ويُسجَّل أثرها في المحادثة. */
 async function finish(call, status, reason) {
   if (!calls.has(call.id)) return;
   clearTimeout(call.timer);
+  stopRingPush(call);
+  if (status === 'rejected') endRingPush(call, 'رُفضت المكالمة');
   calls.delete(call.id);
   if (busy.get(call.from) === call.id) busy.delete(call.from);
   if (busy.get(call.to) === call.id) busy.delete(call.to);
@@ -324,6 +351,7 @@ async function onSocket(client, m) {
       if (!sdp || sdp.length > 60000) return sendErr(client, call.id, 'وصف الاتصال غير صالح');
       clearTimeout(call.timer);
       call.state = 'active'; call.answeredAt = Date.now(); call.calleeClient = client;
+      endRingPush(call, 'تم الرد على المكالمة');
       // حد أقصى للمكالمة: 4 ساعات (حماية من مكالمة معلّقة في الذاكرة)
       call.timer = setTimeout(() => finish(call, 'answered', 'limit'), 4 * 3600 * 1000);
       rt().send(call.callerClient, { type: 'call.accepted', callId: call.id, sdp });
@@ -423,6 +451,7 @@ function start() {
 }
 
 module.exports = {
+  _calls: calls, RING_PUSH_MS,
   ALL, ALL_NAME, settings, saveSettings, chatUsers, invalidateUsers, ensureAll, memberIds, isMember, canMonitor, can,
   summary, messageOut, preview, post, directWith, iceServers, pendingFor, onSocket, onConnect, onDisconnect, sweepMedia, migratePersonalPermissions, start,
   _calls: calls, _reset: () => { calls.forEach((c) => clearTimeout(c.timer)); calls.clear(); busy.clear(); typingConv.clear(); usersCache = null; setCache = null; },
