@@ -11,8 +11,8 @@ const otpProvider = require('../services/otpProvider');
 
 const CUSTOMER_JWT_SECRET = () => process.env.CUSTOMER_JWT_SECRET || process.env.JWT_SECRET;
 
-const generateCustomerToken = (id) =>
-  jwt.sign({ id, type: 'customer' }, CUSTOMER_JWT_SECRET(), {
+const generateCustomerToken = (id, v = 0) =>
+  jwt.sign({ id, type: 'customer', v }, CUSTOMER_JWT_SECRET(), {
     expiresIn: process.env.CUSTOMER_JWT_EXPIRES_IN || '90d',
   });
 
@@ -111,7 +111,7 @@ const verifyOtp = async (req, res) => {
       await user.save();
     }
 
-    const token = generateCustomerToken(user._id);
+    const token = generateCustomerToken(user._id, user.tokenVersion || 0);
 
     res.json({
       success: true,

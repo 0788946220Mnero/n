@@ -4,6 +4,10 @@ const PhoneUser = require('../models/PhoneUser');
 
 const CUSTOMER_JWT_SECRET = () => process.env.CUSTOMER_JWT_SECRET || process.env.JWT_SECRET;
 
+/** استُعيد الرقم من صاحبه (tokenVersion زاد): توكنات الجلسات السابقة لم تعد صالحة. */
+const revoked = (decoded, user) => (Number(decoded.v) || 0) < (Number(user.tokenVersion) || 0);
+const REVOKED_MSG = 'استعاد صاحب هذا الرقم حسابه — سجّل الدخول مجدداً';
+
 /*
   حماية مسارات الزبون (توكن type:'customer').
   إذا كان التوكن ليس توكن زبون (مثلاً توكن أدمن للوحة التحكم) نستدعي next('router')
@@ -31,6 +35,7 @@ const protectCustomer = asyncHandler(async (req, res, next) => {
   if (!user) {
     return res.status(401).json({ success: false, message: 'الحساب غير موجود، الرجاء تسجيل الدخول مجدداً' });
   }
+  if (revoked(decoded, user)) return res.status(401).json({ success: false, message: REVOKED_MSG, code: 'revoked' });
 
   req.phoneUser = user;
   next();
@@ -49,8 +54,9 @@ const requireCustomer = asyncHandler(async (req, res, next) => {
   }
   const user = await PhoneUser.findById(decoded.id);
   if (!user) return res.status(401).json({ success: false, message: 'الحساب غير موجود، الرجاء تسجيل الدخول مجدداً' });
+  if (revoked(decoded, user)) return res.status(401).json({ success: false, message: REVOKED_MSG, code: 'revoked' });
   req.phoneUser = user;
   next();
 });
 
-module.exports = { protectCustomer, requireCustomer };
+module.exports = { protectCustomer, requireCustomer, revoked };

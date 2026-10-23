@@ -25,6 +25,13 @@ function sendToCustomer(phoneUserId, payload) {
   clients.forEach((c) => { if (c.phoneUserId === id && send(c, msg)) n++; });
   return n;
 }
+/** استُعيد الرقم من صاحبه: تُغلق كل اتصالات الجلسات السابقة فوراً (4001 ← الواجهة تطلب الدخول). */
+function disconnectCustomer(phoneUserId) {
+  const id = String(phoneUserId); let n = 0;
+  clients.forEach((c) => { if (c.phoneUserId === id) { try { send(c, { type: 'session.revoked' }); c.socket.close(4001, 'revoked'); } catch (_) { /* */ } clients.delete(c); n++; } });
+  if (n) announceOnline();
+  return n;
+}
 /** لكل من فتح الدردشة العامة. */
 function broadcastCommunity(payload) {
   const msg = JSON.stringify(payload); let n = 0;
@@ -73,7 +80,9 @@ async function onConnection(socket, req) {
   if (!decoded || decoded.type !== 'customer' || !mongoose.isValidObjectId(decoded.id)) { socket.close(4001, 'unauthorized'); return; }
   try {
     const PhoneUser = require('../models/PhoneUser');
-    if (!(await PhoneUser.findById(decoded.id).select('_id').lean())) { socket.close(4002, 'unknown'); return; }
+    const u = await PhoneUser.findById(decoded.id).select('_id tokenVersion').lean();
+    if (!u) { socket.close(4002, 'unknown'); return; }
+    if (require('../middlewares/phoneAuth').revoked(decoded, u)) { socket.close(4001, 'revoked'); return; }
   } catch (_) { socket.close(1011, 'error'); return; }
   if (socket.readyState !== 1) return;
   const c = { socket, phoneUserId: String(decoded.id), community: false, threadId: null, lastTyping: 0 };
@@ -110,4 +119,4 @@ async function onStaffSocket(staffClient, m) {
   if (t) module.exports.sendToCustomer(t.phoneUser, { type: 'support.typing' });
 }
 
-module.exports = { start, sendToCustomer, broadcastCommunity, communityOnline, onStaffSocket, _clients: clients };
+module.exports = { start, sendToCustomer, disconnectCustomer, broadcastCommunity, communityOnline, onStaffSocket, _clients: clients };
