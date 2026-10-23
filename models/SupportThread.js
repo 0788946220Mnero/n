@@ -5,19 +5,33 @@ const mongoose = require('mongoose');
   منفصلة عن دردشة الطاقم (ChatConversation): الزبون ليس مستخدماً في لوحة التحكم،
   ويرد عليه كل من يملك صلاحية support:reply.
 */
+const SUPPORT_TAGS = ['استفسار', 'طلب', 'توصيل', 'شكوى', 'اقتراح', 'مهم'];
+
 const supportThreadSchema = new mongoose.Schema(
   {
     phoneUser: { type: mongoose.Schema.Types.ObjectId, ref: 'PhoneUser', required: true, unique: true, index: true },
     phone: { type: String, required: true, index: true },
     name: { type: String, default: '', trim: true, maxlength: 60 }, // يكتبه الزبون (اختياري)
     lastText: { type: String, default: '' },
-    lastFrom: { type: String, enum: ['customer', 'staff', ''], default: '' },
+    lastFrom: { type: String, enum: ['customer', 'staff', 'system', ''], default: '' },
     lastMessageAt: { type: Date, default: Date.now, index: true },
     unreadStaff: { type: Number, default: 0 },    // رسائل الزبون التي لم يقرأها الطاقم
     unreadCustomer: { type: Number, default: 0 }, // ردود الطاقم التي لم يقرأها الزبون
     status: { type: String, enum: ['open', 'closed'], default: 'open', index: true },
+    // علامتا القراءة: آخر مرة قرأ فيها كل طرف (✓✓)
+    customerReadAt: { type: Date, default: null },
+    staffReadAt: { type: Date, default: null },
+    // من يتولى المحادثة من الطاقم (حتى لا يرد اثنان على الزبون نفسه)
+    assignedTo: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null, index: true },
+    assignedName: { type: String, default: '' },
+    tags: { type: [{ type: String, enum: SUPPORT_TAGS }], default: [] },
+    // قياس سرعة الرد: منذ متى ينتظر الزبون رداً (null = لا ينتظر)
+    awaitingSince: { type: Date, default: null },
+    autoReplyAt: { type: Date, default: null }, // آخر رد تلقائي خارج الدوام (مرة كل 6 ساعات)
   },
   { timestamps: true }
 );
 
-module.exports = mongoose.model('SupportThread', supportThreadSchema);
+const SupportThread = mongoose.model('SupportThread', supportThreadSchema);
+SupportThread.TAGS = SUPPORT_TAGS;
+module.exports = SupportThread;

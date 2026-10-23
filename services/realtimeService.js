@@ -195,6 +195,8 @@ const init = (server) => {
       if (m.type === 'presence') presence.setState(client.userId, m.state);
       else if (m.type === 'bye') presence.bye(client.userId);
       else if (/^(call|chat)\./.test(m.type)) { try { require('./chatService').onSocket(client, m); } catch (e) { console.error('chat ws:', e.message); } }
+      // رسائل الزبائن: «الطاقم يكتب…» يصل للزبون (services/customerRealtime.js)
+      else if (/^support\./.test(m.type)) { require('./customerRealtime').onStaffSocket(client, m).catch(() => {}); }
     });
     // دردشة الطاقم: مكالمة ترنّ له الآن (فتح التطبيق من إشعار الاتصال) + حالة «متصل» لزملائه
     try { require('./chatService').onConnect(client); } catch (e) { console.error('chat connect:', e.message); }

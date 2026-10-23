@@ -12,7 +12,7 @@ const http = require('http');
 const express = require('express');
 const jwt = require('jsonwebtoken');
 
-['User', 'PhoneUser', 'SupportThread', 'SupportMessage', 'Customer', 'PushSubscriber'].forEach((m) => require(`../models/${m}`));
+['User', 'PhoneUser', 'SupportThread', 'SupportMessage', 'SupportSetting', 'CustomerMedia', 'CustomerProfile', 'Order', 'Setting', 'ActivityLog', 'Customer', 'PushSubscriber'].forEach((m) => require(`../models/${m}`));
 require('./helpers/memoryDb').installAll();
 const M = (n) => require('mongoose').model(n);
 const { ROLE_PERMISSIONS } = require('../utils/permissions');

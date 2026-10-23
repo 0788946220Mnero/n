@@ -112,6 +112,7 @@ app.use('/api/staff-alerts', require('./routes/staffAlertRoutes')); // إشعا�
 app.use('/api/obligations', require('./routes/obligationRoutes'));
 app.use('/api/chat', require('./routes/chatRoutes')); // دردشة الطاقم: رسائل وصوت وصور ومكالمات (الإشارات عبر /ws) // الالتزامات الثابتة: تقسيط يومي حتى موعد السداد ثم ذمم الموردين
 app.use('/api/support', require('./routes/supportRoutes')); // «تواصل مع فريق العمل»: دردشة الزبائن مع الطاقم
+app.use('/api/community', require('./routes/communityRoutes')); // «الدردشة العامة» لزبائن المنصة + إشراف فريق العمل
 app.use('/api/relay', require('./routes/relayRoutes')); // الرسول: أوامر المدير من هاتفه لجهاز الكاشير
 // IMAGE-SERVER: سجل تشخيص لطلبات سحابة الصور — الطريقة والمسار والرمز والمدة فقط (لا query ولا رؤوس ولا أجسام).
 // عرض الصور الناجح للزبائن لا يُسجَّل (كثير ولا يفيد)؛ كل فشل يُسجَّل.
@@ -165,6 +166,8 @@ const server = http.createServer(app);
 // خدمة الوقت الحقيقي — تشارك نفس منفذ الخادم
 const realtime = require('./services/realtimeService');
 realtime.init(server);
+// زبائن المنصة: ردود فريق العمل والدردشة العامة لحظياً على /ws/customer
+try { require('./services/customerRealtime').start(); } catch (e) { console.error('customer realtime:', e.message); }
 // نفق الصور: أجهزة DiyarPOS تتصل بنفسها هنا وتُعرض صورها عبر هذا الخادم (بلا Cloudflare)
 const imageRelay = require('./services/imageRelayService');
 realtime.onUpgrade(imageRelay.WS_PATH, imageRelay.handleUpgrade);
@@ -178,6 +181,7 @@ server.listen(PORT, () => {
   try { require('./services/liveReportService').start(); } catch (e) { console.error('liveReport:', e.message); }
   try { require('./services/chatService').start(); } catch (e) { console.error('chat:', e.message); } // دردشة الطاقم: مدة الاحتفاظ بالوسائط
   try { require('./services/permissionMigrations').start(); } catch (e) { console.error('permissions migration:', e.message); } // المبيعات وإغلاق الجرد لمدير النظام: مرة واحدة
+  try { require('./controllers/supportController').startRetention(); } catch (e) { console.error('support retention:', e.message); } // رسائل الزبائن: مدة الاحتفاظ (اختيارية)
   try { require('./services/obligationService').start(); } catch (e) { console.error('obligations:', e.message); } // الالتزامات الثابتة: الإغلاق والتصدير وتنبيه الأيام الفائتة
 });
 
