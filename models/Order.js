@@ -64,6 +64,8 @@ const orderSchema = new mongoose.Schema(
     customerLongitude: { type: Number, default: null },
     deliveryDistance: { type: Number, default: null },   // بالكيلومترات
     deliveryDistanceMode: { type: String, default: '' }, // straight | road
+    // أجرة توصيل أدخلها موظف السنتر يدوياً (طلب هاتفي بلا خريطة) — لا تُعاد حسابها من الموقع
+    deliveryFeeManual: { type: Boolean, default: false },
     notes: { type: String, default: '' },
     status: {
       type: String,

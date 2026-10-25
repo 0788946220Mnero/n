@@ -65,6 +65,7 @@ const numbersFrom = (summary = {}) => ({
   otherPaymentsTotal: Number(summary.otherPaymentsTotal || 0),
   expensesTotal: Number(summary.expensesTotal || 0),
   cashNet: Number(summary.cashNet || 0),
+  cliqNet: Number(summary.cliqNet || 0),
   periodStart: summary.firstAt || null,
 });
 

@@ -79,7 +79,7 @@ test('الإنشاء لمدير النظام وحده وبتوقيعه، وال�
 });
 
 test('الكاشير يدفع قسط اليوم: سند صرف بتوقيع مدير النظام يدخل جرده — ولا يُدفع مرتين', async () => {
-  const r = await call('POST', `/api/obligations/${rent._id}/pay`, { token: tokens.cashier, body: {} });
+  const r = await call('POST', `/api/obligations/${rent._id}/pay`, { token: tokens.cashier, body: { source: 'drawer', paymentMethod: 'cash' } });
   assert.equal(r.status, 201, JSON.stringify(r.body));
   const e = r.body.expense;
   assert.equal(e.amount, 30);
@@ -90,7 +90,7 @@ test('الكاشير يدفع قسط اليوم: سند صرف بتوقيع مد
   assert.equal(e.obligationDay, '2026-10-18'); assert.equal(e.obligationRemaining, 270); assert.equal(e.obligationDaysLeft, 9);
   assert.ok(e.number > 0, 'رقم السند التسلسلي');
   assert.equal(r.body.obligation.today.need, 0);
-  const again = await call('POST', `/api/obligations/${rent._id}/pay`, { token: tokens.cashier, body: {} });
+  const again = await call('POST', `/api/obligations/${rent._id}/pay`, { token: tokens.cashier, body: { source: 'drawer', paymentMethod: 'cash' } });
   assert.equal(again.status, 400); assert.match(again.body.message, /مدفوع/);
   // في مصروفات جرد الكاشير
   const mine = await call('GET', '/api/expenses', { token: tokens.cashier });
@@ -101,7 +101,7 @@ test('الكاشير يدفع قسط اليوم: سند صرف بتوقيع مد
 
 test('يوم فات بلا دفع ← القسط يزيد على باقي الأيام + تنبيه صباح اليوم التالي', async () => {
   day('2026-10-19');
-  assert.equal((await call('POST', `/api/obligations/${rent._id}/pay`, { token: tokens.cashier2, body: {} })).body.expense.amount, 30);
+  assert.equal((await call('POST', `/api/obligations/${rent._id}/pay`, { token: tokens.cashier2, body: { source: 'drawer', paymentMethod: 'cash' } })).body.expense.amount, 30);
   day('2026-10-20'); // لم يُدفع
   await S.sweep({ force: true });
   day('2026-10-21');
@@ -121,7 +121,7 @@ test('يوم فات بلا دفع ← القسط يزيد على باقي الأ
 });
 
 test('إلغاء قسط (مدير النظام): يعود المبلغ للمتبقي ويُعاد التوزيع', async () => {
-  const r = await call('POST', `/api/obligations/${rent._id}/pay`, { token: tokens.cashier, body: {} });
+  const r = await call('POST', `/api/obligations/${rent._id}/pay`, { token: tokens.cashier, body: { source: 'drawer', paymentMethod: 'cash' } });
   assert.equal(r.body.expense.amount, 34.286);
   const v = await call('PATCH', `/api/expenses/${r.body.expense._id}/void`, { token: tokens.admin });
   assert.equal(v.status, 200);
@@ -134,21 +134,21 @@ test('إلغاء قسط (مدير النظام): يعود المبلغ للمت�
 
 test('دفعتان في اللحظة نفسها لا تتجاوزان مبلغ الدورة', async () => {
   const [a, b] = await Promise.all([
-    call('POST', `/api/obligations/${rent._id}/pay`, { token: tokens.cashier, body: { amount: 200 } }),
-    call('POST', `/api/obligations/${rent._id}/pay`, { token: tokens.cashier2, body: { amount: 200 } }),
+    call('POST', `/api/obligations/${rent._id}/pay`, { token: tokens.cashier, body: { amount: 200, source: 'drawer', paymentMethod: 'cash' } }),
+    call('POST', `/api/obligations/${rent._id}/pay`, { token: tokens.cashier2, body: { amount: 200, source: 'drawer', paymentMethod: 'cash' } }),
   ]);
   const ok = [a, b].filter((x) => x.status === 201);
   assert.equal(ok.length, 1, `واحدة فقط تمر: ${a.status}/${b.status}`);
   const g = (await call('GET', `/api/obligations/${rent._id}`, { token: tokens.admin })).body;
   assert.equal(g.obligation.cycle.paid, 260); assert.equal(g.obligation.cycle.remaining, 40);
-  assert.equal((await call('POST', `/api/obligations/${rent._id}/pay`, { token: tokens.cashier, body: { amount: 41 } })).status, 400, 'أكثر من المتبقي');
+  assert.equal((await call('POST', `/api/obligations/${rent._id}/pay`, { token: tokens.cashier, body: { amount: 41, source: 'drawer', paymentMethod: 'cash' } })).status, 400, 'أكثر من المتبقي');
 });
 
 test('الصلاحيات: المراقب يرى ولا يدفع، المدير يدفع ولا يعدّل، والأرشفة لمدير النظام', async () => {
   assert.equal((await call('GET', '/api/obligations', { token: tokens.observer })).status, 200);
-  assert.equal((await call('POST', `/api/obligations/${rent._id}/pay`, { token: tokens.observer, body: {} })).status, 403);
+  assert.equal((await call('POST', `/api/obligations/${rent._id}/pay`, { token: tokens.observer, body: { source: 'drawer', paymentMethod: 'cash' } })).status, 403);
   assert.equal((await call('PUT', `/api/obligations/${rent._id}`, { token: tokens.manager, body: { amount: 1 } })).status, 403);
-  assert.equal((await call('POST', `/api/obligations/${rent._id}/pay`, { token: tokens.cashier, body: { amount: 5, source: 'capital' } })).status, 403, 'رأس المال لصاحب صلاحيته');
+  assert.equal((await call('POST', `/api/obligations/${rent._id}/pay`, { token: tokens.cashier, body: { amount: 5, source: 'capital', paymentMethod: 'cash' } })).status, 403, 'رأس المال لصاحب صلاحيته');
   const list = (await call('GET', '/api/obligations', { token: tokens.cashier })).body;
   assert.equal(list.canManage, false); assert.equal(list.canPay, true);
   assert.equal(list.obligations.length, 2);
@@ -189,7 +189,7 @@ test('المسدَّد كاملاً قبل الموعد يُغلق «مسدّد�
   assert.equal(r.status, 201);
   const id = r.body.obligation._id;
   assert.equal(r.body.obligation.today.need, 15.5, '62 ÷ 4');
-  assert.equal((await call('POST', `/api/obligations/${id}/pay`, { token: tokens.cashier, body: { amount: 62 } })).status, 201);
+  assert.equal((await call('POST', `/api/obligations/${id}/pay`, { token: tokens.cashier, body: { amount: 62, source: 'drawer', paymentMethod: 'cash' } })).status, 201);
   const g = (await call('GET', `/api/obligations/${id}`, { token: tokens.cashier })).body;
   assert.equal(g.obligation.cycle.remaining, 0);
   assert.equal(g.obligation.today.need, 0);

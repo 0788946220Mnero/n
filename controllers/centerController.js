@@ -43,6 +43,20 @@ const normPhone = (raw) => {
 };
 const phoneVariants = (local) => [local, `+962${local.slice(1)}`, `962${local.slice(1)}`];
 
+/**
+ * هل تعرف قواعد التوصيل الحالية التوصيل المجاني؟ (نفس معاني services/deliveryFeeService.js)
+ *   perKm: مسافة مجانية > 0 · tiered: سعر الشريحة الأولى 0 · byValue: شريحة بمبلغ 0، أو شريحة مسافة تعرف المجاني
+ */
+const freeAllowed = (d = {}) => {
+  const num = (v, def) => (v === undefined || v === null || v === '' || !Number.isFinite(Number(v)) ? def : Number(v));
+  const freeKm = num(d.freeDistanceKm, 1) > 0;
+  const tierFree = num(d.tier1Fee, 1) === 0;
+  const byDistFree = (d.valueDistanceMode === 'tiered') ? tierFree : freeKm;
+  if (d.pricingMode === 'tiered') return tierFree;
+  if (d.pricingMode === 'byValue') return (d.valueTiers || []).some((t) => (t.byDistance ? byDistFree : Number(t.fee || 0) === 0));
+  return freeKm;
+};
+
 /** تسعير الأصناف من القاعدة (كالسفري): السعر + إضافاته المعرّفة، وطابعة كل قسم. */
 const priceItems = async (items) => {
   const ids = items.map((i) => i.product).filter((id) => mongoose.Types.ObjectId.isValid(id));
@@ -114,6 +128,7 @@ const createOrder = async (req, res) => {
   let deliveryDistanceMode = '';
   let lat = null;
   let lng = null;
+  let deliveryFeeManual = false;
   if (orderType === 'delivery') {
     const d = (settings && settings.delivery) || {};
     if (d.enabled === false) return res.status(403).json({ success: false, code: 'DELIVERY_DISABLED', message: 'التوصيل متوقف حالياً — يمكن الاستلام من المطعم' });
@@ -123,7 +138,16 @@ const createOrder = async (req, res) => {
     const hasLoc = b.latitude != null && b.longitude != null && Number.isFinite(la) && Number.isFinite(ln) && Math.abs(la) <= 90 && Math.abs(ln) <= 180 && !(la === 0 && ln === 0);
     if (hasLoc) { lat = la; lng = ln; }
     const hasRest = typeof d.restaurantLatitude === 'number' && typeof d.restaurantLongitude === 'number';
-    if (hasLoc && hasRest) {
+    /* أجرة يدوية من موظف السنتر (manualDeliveryFee): طلب هاتفي بلا GPS ولا خريطة.
+       تُعتمد كما أدخلها — لا تُستبدل بتعرفة محسوبة من الموقع — والصفر فقط إن كانت قواعد التوصيل تعرف المجاني. */
+    const rawFee = b.manualDeliveryFee;
+    if (rawFee !== undefined && rawFee !== null && rawFee !== '') {
+      const fee = Number(rawFee);
+      if (!Number.isFinite(fee) || fee < 0 || fee > 100) return res.status(400).json({ success: false, code: 'INVALID_FEE', message: 'أجرة التوصيل يجب أن تكون رقماً بين 0 و100 د.أ' });
+      if (fee === 0 && !freeAllowed(d)) return res.status(400).json({ success: false, code: 'FREE_NOT_ALLOWED', message: 'التوصيل المجاني غير مفعّل في قواعد التوصيل — أدخل أجرة أكبر من صفر' });
+      deliveryFee = r3(fee);
+      deliveryFeeManual = true;
+    } else if (hasLoc && hasRest) {
       const q = await quoteDelivery({ restaurantLat: d.restaurantLatitude, restaurantLng: d.restaurantLongitude, customerLat: la, customerLng: ln, settings: d, itemsTotal: priced.itemsTotal });
       if (!q.ok && q.reason === 'OUT_OF_RANGE') {
         return res.status(400).json({ success: false, code: 'OUT_OF_RANGE', message: `الموقع خارج نطاق التوصيل (${q.distanceKm} كم — الحد ${q.maxDistanceKm} كم)` });
@@ -150,6 +174,7 @@ const createOrder = async (req, res) => {
     total: Number((priced.itemsTotal + deliveryFee).toFixed(3)),
     customerLatitude: lat, customerLongitude: lng,
     deliveryDistance, deliveryDistanceMode,
+    deliveryFeeManual,
     paymentMethod: ['cash', 'cliq', 'card'].includes(b.paymentMethod) ? b.paymentMethod : 'cash',
     orderType,
     notes: String(b.notes || '').trim().slice(0, 300),
@@ -182,7 +207,7 @@ const createOrder = async (req, res) => {
     else await Customer.create({ phone, firstOrderAt: now, ...set });
   } catch (e) { console.error('center customer upsert:', e.message); }
 
-  logActivity({ req, order, action: 'center.order', after: order.status, details: { type: orderType, phone } });
+  logActivity({ req, order, action: 'center.order', after: order.status, details: { type: orderType, phone, ...(orderType === 'delivery' ? { deliveryFee, feeMode: deliveryFeeManual ? 'يدوية' : 'محسوبة' } : {}) } });
   try { realtime.emitOrderCreated(order); } catch (e) { console.error('realtime emit failed:', e.message); }
   pushService.notifyNewOrder(order).catch(() => {});
   console.log(`📞 بيع سنتر ${order.orderNumber} بواسطة ${user.username} (${order.status}) — ${order.total} د.أ`);
@@ -364,4 +389,5 @@ const monitorUser = async (req, res) => {
 };
 
 module.exports = wrapAll({ createOrder, lookupCustomer, listOrders, monitor, monitorUser });
+module.exports.freeAllowed = freeAllowed;
 module.exports.normPhone = normPhone;

@@ -14,15 +14,18 @@ const canCreateExpense = (req, res, next) => {
   return res.status(403).json({ success: false, message: 'ليس لديك صلاحية للقيام بهذا الإجراء' });
 };
 const { createExpense, listExpenses,
-  logExpenses, voidExpense, getSignature, setSignature, getExpense } = require('../controllers/expenseController');
+  logExpenses, voidExpense, getSignature, setSignature, getExpense, meta, report } = require('../controllers/expenseController');
 
 // المصروفات: الكاشير فما فوق يسجّل، وكلٌّ يرى مصروفات جرده (والمدير الكل)
-router.post('/', protect, canCreateExpense, audit('expense.create', (req) => ({ amount: Number(req.body.amount || 0), details: { name: String(req.body.name || '').slice(0, 120), source: req.body.source === 'capital' ? 'رأس المال' : 'الصندوق', ...(req.body.employee ? { employee: String(req.body.employeeName || req.body.paidTo || '') } : {}) } })), createExpense);
+router.post('/', protect, canCreateExpense, audit('expense.create', (req) => ({ amount: Number(req.body.amount || 0), details: { name: String(req.body.name || '').slice(0, 120), source: req.body.source === 'capital' ? 'رأس المال' : 'الصندوق', method: req.body.paymentMethod === 'cliq' ? 'كليك' : 'نقداً', ...(req.body.employee ? { employee: String(req.body.employeeName || req.body.paidTo || '') } : {}) } })), createExpense);
 // توقيع مدير النظام لسندات الموظفين، والسند كاملاً للطباعة — قبل '/:id'
 router.get('/signature', protect, getSignature);
 router.put('/signature', protect, setSignature);
 // سجل المصروف الكامل — قبل '/:id' وما شابه
 router.get('/log', protect, canView, logExpenses);
+// التصنيفات ووسائل الدفع، وتقرير الجرد المالي (المصدر/الوسيلة/الحساب، والمتوقع مقابل الفعلي)
+router.get('/meta', protect, meta);
+router.get('/report', protect, canView, report);
 router.get('/:id', protect, getExpense);
 router.get('/', protect, canView, listExpenses);
 router.patch('/:id/void', protect, authorize('admin', 'manager', 'cashier'), voidExpense);

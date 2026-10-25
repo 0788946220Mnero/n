@@ -44,6 +44,9 @@ const deliveryRecord = (o) => ({
   customerName: o.customerName || '',
   phone: o.phone || '',
   address: o.address || '',
+  addressOption: o.addressOption || '',
+  // مصدر الطلب: منصة (إحداثيات من الزبون غالباً) أو سنتر (هاتفي — منطقة وعنوان نصي بلا خريطة)
+  source: o.source || 'web',
   latitude: validCoords(o.customerLatitude, o.customerLongitude) ? o.customerLatitude : null,
   longitude: validCoords(o.customerLatitude, o.customerLongitude) ? o.customerLongitude : null,
   driver: o.driver || null,

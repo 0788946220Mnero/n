@@ -554,6 +554,8 @@ const getDeliveryConfig = async (req, res) => {
       valueDistanceMode: require('../services/deliveryFeeService').normalize(d).valueDistanceMode,
       addressOptions: Array.isArray(d.addressOptions) ? d.addressOptions : [],
       addressOptionRequired: d.addressOptionRequired === true,
+      // بيع السنتر: هل يُقبل صفر أجرةً يدوية؟ (قواعد التوصيل تعرف المجاني)
+      freeDeliveryAllowed: require('./centerController').freeAllowed(d),
     });
   } catch (err) {
     res.status(500).json({ success: false, message: 'تعذّر جلب إعدادات التوصيل' });

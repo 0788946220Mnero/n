@@ -1142,6 +1142,14 @@ const summarizeOrders = (orders, expenses = [], delivery = null, collections = [
   // المصروفات: الملغى يبقى أثراً للمراجعة لكنه خارج الحساب
   const liveExpenses = expenses.filter((e) => !e.voided);
   const expensesTotal = Number(liveExpenses.reduce((t, e) => t + Number(e.amount || 0), 0).toFixed(3));
+  // وسيلة الدفع الفعلية لكل سند: النقدي يخرج من الدرج، وكليك من رصيد كليك — لا الاثنان معاً
+  // (السند القديم بلا وسيلة كان يُحسب نقداً دائماً، ويبقى كذلك)
+  const { methodOf, categoryLabel } = require('../utils/expenseCategories');
+  const amt = (arr) => Number(arr.reduce((t, e) => t + Number(e.amount || 0), 0).toFixed(3));
+  const expensesCash = amt(liveExpenses.filter((e) => methodOf(e) === 'cash'));
+  const expensesCliq = amt(liveExpenses.filter((e) => methodOf(e) === 'cliq'));
+  const supCash = Number((collections || []).filter((r) => (r.paymentMethod || 'cash') === 'cash').reduce((t, r) => t + Number(r.amount || 0), 0).toFixed(3));
+  const supCliq = Number((collections || []).filter((r) => r.paymentMethod === 'cliq').reduce((t, r) => t + Number(r.amount || 0), 0).toFixed(3));
 
   const times = orders.concat(expenses).map((o) => new Date(o.createdAt).getTime()).filter(Boolean);
 
@@ -1176,7 +1184,10 @@ const summarizeOrders = (orders, expenses = [], delivery = null, collections = [
     expenseItems: liveExpenses
       .slice()
       .sort((x, y) => new Date(x.createdAt) - new Date(y.createdAt))
-      .map((e) => ({ number: e.number || null, name: e.name || '', amount: Number(Number(e.amount || 0).toFixed(3)), at: e.createdAt || null, by: e.createdByName || '' })),
+      .map((e) => ({ number: e.number || null, name: e.name || '', amount: Number(Number(e.amount || 0).toFixed(3)), at: e.createdAt || null, by: e.createdByName || '', method: methodOf(e), category: e.category ? categoryLabel(e.category) : '' })),
+    // المصروفات حسب وسيلة الدفع الفعلية
+    expensesCash,
+    expensesCliq,
     // الصافي = مجموع البيع (بدون توصيل) − المصروفات − ما سُدّد للموردين
     netAfterExpenses: Number((sum(success) - expensesTotal
       - (collections || []).reduce((t, r) => t + Number(r.amount || 0), 0)).toFixed(3)),
@@ -1195,9 +1206,11 @@ const summarizeOrders = (orders, expenses = [], delivery = null, collections = [
     // (التوصيل لا يدخل: المندوب يحصّله من الزبون ويحتفظ به)
     // ما في الدرج فعلاً: النقدي فقط ناقص المصروفات (كليك وفيزا لا تدخل الصندوق)
     // − ما سُدّد للموردين نقداً من الدرج في هذا الجرد
-    cashNet: Number((sum(success.filter((o) => payOf(o) === 'cash'))
-      - (collections || []).filter((r) => (r.paymentMethod || 'cash') === 'cash').reduce((t, r) => t + Number(r.amount || 0), 0)
-      - expensesTotal).toFixed(3)),
+    // (المصروف المدفوع بكليك لا يُخصم من النقد — يُخصم من رصيد كليك أدناه)
+    cashNet: Number((sum(success.filter((o) => payOf(o) === 'cash')) - supCash - expensesCash).toFixed(3)),
+    // رصيد كليك المتوقع: مبيعات كليك − ما صُرف بكليك من الصندوق − ما سُدّد للموردين بكليك
+    cliqNet: Number((sum(success.filter((o) => payOf(o) === 'cliq')) - supCliq - expensesCliq).toFixed(3)),
+    supplierPaymentsCliq: supCliq,
     firstAt: times.length ? new Date(Math.min(...times)) : null,
     generatedAt: new Date(),
   };
@@ -1401,9 +1414,27 @@ const closeShift = async (req, res) => {
         : 'لا توجد طلبات ولا مصروفات لإغلاقها حالياً' });
     }
 
+    // الرصيد الفعلي بعد العدّ (اختياري): يُقارن بالمتوقع ويُحفظ الفرق وسببه
+    const num = (v) => (v === '' || v == null ? null : Number(v));
+    const actualCash = num(req.body.actualCash);
+    const actualCliq = num(req.body.actualCliq);
+    for (const v of [actualCash, actualCliq]) {
+      if (v != null && (!Number.isFinite(v) || v < 0 || v > 10000000)) return res.status(400).json({ message: 'الرصيد الفعلي يجب أن يكون رقماً صحيحاً (صفر أو أكثر)' });
+    }
+    const diffReason = String(req.body.diffReason || '').trim().slice(0, 200);
+
     const summary = summarizeOrders(orders, expenses, delivery, collections);
     // جرد المطعم كاملاً = جرد لكل مستخدم داخله، يُطبع لكلٍّ ورقة مستقلة
     if (scope === 'all') summary.byUser = userSummaries(orders, expenses, collections);
+    const r3 = (n) => Number(Number(n).toFixed(3));
+    const actual = {
+      actualCash: actualCash == null ? null : r3(actualCash),
+      actualCliq: actualCliq == null ? null : r3(actualCliq),
+      cashDiff: actualCash == null ? null : r3(actualCash - summary.cashNet),
+      cliqDiff: actualCliq == null ? null : r3(actualCliq - summary.cliqNet),
+      diffReason,
+    };
+    if (actualCash != null || actualCliq != null) summary.actual = actual;
     /* الدورة: جرد المستخدم يُغلق دورته المفتوحة (تُفتح الآن إن لم يفتحها)، فيبقى
        المعرّف نفسه من الفتح إلى الإغلاق. جرد المطعم كاملاً دورة مستقلة. */
     const openSession = scope === 'all' ? null : await ensureOpenSession(owner, { auto: true });
@@ -1441,7 +1472,7 @@ const closeShift = async (req, res) => {
       const now = new Date();
       const closeFields = {
         status: 'closed', closedAt: now, closedBy: req.user._id, closedByName: handlerName(req.user),
-        periodEnd: now, summary: { ...summary, scope, userName }, ...numbersFrom(summary),
+        periodEnd: now, summary: { ...summary, scope, userName }, ...numbersFrom(summary), ...actual,
       };
       if (openSession) {
         await ShiftSession.updateOne({ _id: openSession._id }, { $set: closeFields });
@@ -1497,3 +1528,5 @@ module.exports = wrapAll({
   trackBatch,
   myOrders,
   closeShift, getOrders, getOrder, createOrder, confirmOrder, updateOrderStatus, getDashboardStats, getPrintQueue, markPrinted, createPosOrder, getBlockedPhones, blockPhone, unblockPhone });
+// حساب الجرد نفسه لتقرير المصروفات (expenseController.report) — مصدر واحد للأرقام
+module.exports.summarizeOrders = summarizeOrders;

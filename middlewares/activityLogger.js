@@ -16,6 +16,7 @@ const audit = (action, describe) => (req, res, next) => {
 
   res.on('finish', () => {
     if (res.statusCode >= 400) return;
+    if (res.locals.auditSkip) return; // إعادة إرسال لعملية سُجّلت (معرّف العملية): لا سجل ولا إشعار ثانٍ
     try {
       const body = res.locals.auditBody || {};
       let user = req.user || null;

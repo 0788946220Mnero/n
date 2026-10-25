@@ -232,13 +232,16 @@ const archive = async (req, res) => {
 
 /* ═════════ دفع قسط اليوم ═════════ */
 
-// POST /api/obligations/:id/pay { amount?, source: drawer|capital }
+// POST /api/obligations/:id/pay { amount?, source: drawer|capital, paymentMethod: cash|cliq } — كلاهما إلزامي ومنفصل
 const pay = async (req, res) => {
   if (!validId(req.params.id)) return bad(res, 'معرّف غير صالح');
   const ob = await FixedObligation.findOne({ _id: req.params.id, archived: { $ne: true } }).select('+approvedSignature').lean();
   if (!ob) return bad(res, 'الالتزام غير موجود', 404);
   const b = req.body || {};
-  const source = b.source === 'capital' ? 'capital' : 'drawer';
+  if (!['drawer', 'capital'].includes(b.source)) return bad(res, 'اختر مصدر التمويل: الصندوق أو رأس المال', 400, { code: 'SOURCE_REQUIRED' });
+  if (!['cash', 'cliq'].includes(b.paymentMethod)) return bad(res, 'اختر وسيلة الدفع: نقداً أو كليك', 400, { code: 'METHOD_REQUIRED' });
+  const source = b.source;
+  const paymentMethod = b.paymentMethod;
   if (source === 'capital' && !hasPermission(req.user, 'capital:manage')) return bad(res, 'الدفع من رأس المال يحتاج صلاحية «رأس المال»', 403);
   if (!ob.approvedSignature) return bad(res, 'الالتزام بلا توقيع مدير النظام — يوقّعه أولاً من «الالتزامات الثابتة»', 400, { code: 'SIGNATURE_MISSING' });
 
@@ -284,6 +287,9 @@ const pay = async (req, res) => {
       amount,
       paidTo: ob.payee,
       source,
+      paymentMethod,
+      account: `${source}_${paymentMethod}`,
+      category: 'obligation',
       spentAt: new Date(),
       kind: 'general',
       approvedByName: ob.approvedByName, approvedByRole: 'admin', approvedAt: ob.approvedAt, approvedSignature: ob.approvedSignature,
@@ -298,7 +304,7 @@ const pay = async (req, res) => {
   }
   if (source === 'capital') {
     await require('../models/CapitalEntry').create({
-      type: 'expense', amount, note: expense.name, date: expense.spentAt, expense: expense._id, expenseNumber: expense.number,
+      type: 'expense', amount, note: expense.name, date: expense.spentAt, expense: expense._id, expenseNumber: expense.number, paymentMethod,
       createdBy: req.user._id, createdByName: nameOf(req.user),
     });
   }

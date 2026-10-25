@@ -16,6 +16,8 @@ const capitalEntrySchema = new mongoose.Schema(
     date: { type: Date, default: Date.now, index: true },          // تاريخ الحركة الفعلي
     expense: { type: mongoose.Schema.Types.ObjectId, ref: 'Expense', default: null, index: true },
     expenseNumber: { type: Number, default: null },
+    // وسيلة دفع سند الصرف (للتوثيق والتقارير) — الأثر على الرصيد واحد مهما كانت الوسيلة
+    paymentMethod: { type: String, enum: ['cash', 'cliq', ''], default: '' },
     // تسديد فاتورة مورّد من رأس المال (−) — مرتبط بالذمة
     receivable: { type: mongoose.Schema.Types.ObjectId, ref: 'Receivable', default: null, index: true },
     receivableNumber: { type: Number, default: null },

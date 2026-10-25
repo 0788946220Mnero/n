@@ -42,6 +42,13 @@ const shiftSessionSchema = new mongoose.Schema(
     otherPaymentsTotal: { type: Number, default: 0 },
     expensesTotal: { type: Number, default: 0 },
     cashNet: { type: Number, default: 0 },
+    cliqNet: { type: Number, default: 0 }, // رصيد كليك المتوقع
+    // الرصيد الفعلي عند الإغلاق (اختياري — يُدخله من يُغلق بعد العدّ): null = لم يُسجَّل
+    actualCash: { type: Number, default: null },
+    actualCliq: { type: Number, default: null },
+    cashDiff: { type: Number, default: null },  // الفعلي − المتوقع (سالب = عجز)
+    cliqDiff: { type: Number, default: null },
+    diffReason: { type: String, default: '', maxlength: 200 },
     summary: { type: mongoose.Schema.Types.Mixed, default: null },
   },
   { timestamps: true }
