@@ -414,4 +414,13 @@ router.get('/delivery-reps', wrap(async (_req, res) => {
   });
 }));
 
+/* ── تنبيهات للسائقين والمتاجر (يدوية من الإدارة) ── */
+const notices = require('../services/noticeService');
+const noticeLimiter = rateLimit({ windowMs: 60 * 1000, limit: 10, standardHeaders: true, legacyHeaders: false, message: { success: false, message: 'تنبيهات كثيرة — انتظر دقيقة' } });
+router.get('/notices', can(PERM.manage), wrap(async (_req, res) => { res.json({ success: true, notices: await notices.history() }); }));
+router.post('/notices', can(PERM.manage), noticeLimiter, wrap(async (req, res) => {
+  const r = await notices.send(req.body || {}, { id: req.user && req.user._id, name: req.user && req.user.name });
+  res.status(201).json({ success: true, ...r });
+}));
+
 module.exports = router;

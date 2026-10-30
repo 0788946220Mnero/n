@@ -263,8 +263,8 @@ const sharePage = async (req, res) => {
   ${meta}
   ${tw}
   ${go}
-  <style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#0c0906;color:#f0e6d2;font-family:Tajawal,system-ui,sans-serif;text-align:center}
-  img{max-width:min(92vw,520px);border-radius:16px;display:block;margin:0 auto 1rem}a{color:#c9a84c;font-weight:700}</style>
+  <style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#0c0906;color:#E1F7F2;font-family:Tajawal,system-ui,sans-serif;text-align:center}
+  img{max-width:min(92vw,520px);border-radius:16px;display:block;margin:0 auto 1rem}a{color:#31C6A5;font-weight:700}</style>
 </head>
 <body>
   <main>

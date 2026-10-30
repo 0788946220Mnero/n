@@ -48,6 +48,15 @@ function buildRouter() {
   r.use('/chat', chat.router);
   r.use('/geo', guardAsync(require('./routes/geoRoutes')));
   r.get('/health', (_req, res) => res.json({ ok: true, service: 'alburaq' }));
+  // معلومات عامة لشاشة «الدخول كزائر» (بلا حساب): التسعير وأسماء المناطق فقط
+  r.get('/public/info', (req, res, next) => (async () => {
+    const { getSettings } = require('./settings');
+    const Area = require('./models/Area');
+    const s = await getSettings();
+    const areas = await Area.find({ active: true }).select('name').sort({ name: 1 }).lean();
+    res.json({ success: true, brand: require('./config').brand, meterFlagFils: s.meterFlagFils, perKmFils: s.perKmFils,
+      driverPerKmFils: Math.max(0, s.perKmFils - s.companyCutPerKmFils), offerTimeoutSec: s.offerTimeoutSec, areas: areas.map((a) => a.name) });
+  })().catch(next));
   r.use((_req, res) => res.status(404).json({ success: false, message: 'المسار غير موجود' }));
   // معالج أخطاء الوحدة: نفس رسائل البراق، ولا تسقط الأخطاء لمعالج المطعم
   // eslint-disable-next-line no-unused-vars

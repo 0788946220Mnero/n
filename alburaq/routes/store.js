@@ -4,6 +4,7 @@ const bcrypt = require('bcryptjs');
 const Store = require('../models/Store');
 const Area = require('../models/Area');
 const Trip = require('../models/Trip');
+const Driver = require('../models/Driver');
 const { signStoreToken, requireStore } = require('../auth');
 const { normalizePhone, hashSecret, compareSecret } = require('../security');
 const { nextFailureState, isLocked } = require('../loginPolicy');
@@ -37,7 +38,7 @@ router.post('/register', limiter(10), async (req, res) => {
   if (await Store.exists({ phone })) return res.status(409).json({ success: false, message: 'هذا الرقم مسجّل مسبقاً' });
   const store = await Store.create({ name, phone, passwordHash: await hashSecret(password), location: { ...location, at: new Date() } });
   realtime.toAdmins({ type: 'store.updated', store: publicStore(store) });
-  res.status(201).json({ success: true, token: signStoreToken(store), store: publicStore(store) });
+  res.status(201).json({ success: true, token: signStoreToken(store, req.body.remember !== false), store: publicStore(store) });
 });
 
 /** POST /api/brq/store/login  { phone, password } */
@@ -58,7 +59,7 @@ router.post('/login', limiter(20), async (req, res) => {
     return res.status(401).json(invalid);
   }
   await Store.updateOne({ _id: store._id }, { $set: { failedAttempts: 0, lockedUntil: null } });
-  res.json({ success: true, token: signStoreToken(store), store: publicStore(store) });
+  res.json({ success: true, token: signStoreToken(store, req.body.remember !== false), store: publicStore(store) });
 });
 
 router.get('/me', requireStore, (req, res) => res.json({ success: true, store: publicStore(req.store) }));
@@ -80,7 +81,12 @@ router.get('/price-sheet', requireStore, async (req, res, next) => {
 /** GET /api/brq/store/trips — الطلب المفتوح + آخر الطلبات */
 router.get('/trips', requireStore, async (req, res) => {
   const trips = await Trip.find({ store: req.store._id }).sort({ requestedAt: -1 }).limit(20).lean();
-  res.json({ success: true, trips: trips.map((t) => publicTrip(t, 'store')) });
+  // السائق المقبول ووقت وصوله للطلبات المفتوحة (ثم يتحدث لحظياً عبر trip.driver)
+  const { driverEta } = require('../eta');
+  const open = trips.filter((t) => t.driver && ['assigned', 'picked'].includes(t.status));
+  const drivers = open.length ? await Driver.find({ _id: { $in: open.map((t) => t.driver) } }).select('name phone vehicle plate lastLocation ratingSum ratingCount').lean() : [];
+  const byId = new Map(drivers.map((d) => [String(d._id), d]));
+  res.json({ success: true, trips: trips.map((t) => ({ ...publicTrip(t, 'store'), live: t.driver ? driverEta(t, byId.get(String(t.driver))) : null })) });
 });
 
 /**
@@ -193,6 +199,12 @@ router.get('/print/statement', requireStore, async (req, res, next) => {
 router.post('/logout', requireStore, async (req, res) => {
   await Store.updateOne({ _id: req.store._id }, { $inc: { tokenVersion: 1 } });
   res.json({ success: true });
+});
+
+/** GET /notices — تنبيهات إدارة البراق لهذا المتجر */
+router.get('/notices', requireStore, async (req, res, next) => {
+  try { res.json({ success: true, notices: await require('../services/noticeService').listFor('store', req.store._id, req.query.limit) }); }
+  catch (e) { next(e); }
 });
 
 module.exports = router;

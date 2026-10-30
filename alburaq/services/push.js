@@ -39,7 +39,10 @@ async function sendToTokens(tokens, { title, body, data = {}, urgent = false, tt
   if (!fb || !tokens.length) return { sent: 0, failed: 0, invalidTokens: [] };
   const invalidTokens = [];
   let sent = 0, failed = 0;
-  const payload = Object.fromEntries(Object.entries({ ...data, title, body }).map(([k, v]) => [k, String(v ?? '')]));
+  // كل شيء في «البيانات»: عامل الخدمة في المتصفح يعرض الإشعار بنفسه (اهتزاز قوي، يبقى حتى يُفتح، رابط نسبي)
+  // وتطبيق أندرويد يعرضه ملء الشاشة. (رابط fcmOptions يجب أن يكون https مطلقاً — النسبي كان يُفشل الإرسال)
+  const payload = Object.fromEntries(Object.entries({ ...data, title, body, urgent: urgent ? '1' : '', tag: tag || data.kind || 'brq' })
+    .map(([k, v]) => [k, String(v ?? '')]));
   const ttl = ttlSec ? Math.max(1, Math.round(ttlSec)) : null;
   for (let i = 0; i < tokens.length; i += 500) {
     const batch = tokens.slice(i, i + 500);
@@ -48,19 +51,12 @@ async function sendToTokens(tokens, { title, body, data = {}, urgent = false, tt
         tokens: batch,
         data: payload,
         android: { priority: 'high', ...(ttl ? { ttl: ttl * 1000 } : {}) },
-        webpush: {
-          headers: { Urgency: 'high', ...(ttl ? { TTL: String(ttl) } : {}) },
-          notification: {
-            title, body, dir: 'rtl', lang: 'ar', icon: 'shared/logo.png', badge: 'shared/logo.png',
-            tag: tag || payload.kind || 'brq', renotify: true, requireInteraction: !!urgent,
-            vibrate: urgent ? [600, 200, 600, 200, 600, 200, 600] : [200, 100, 200],
-          },
-          fcmOptions: { link: payload.link || './' },
-        },
+        apns: { headers: { 'apns-priority': '10' } },
+        webpush: { headers: { Urgency: 'high', ...(ttl ? { TTL: String(ttl) } : {}) } },
       });
       res.responses.forEach((r, idx) => {
         if (r.success) sent++;
-        else { failed++; if (DEAD.includes(r.error && r.error.code)) invalidTokens.push(batch[idx]); }
+        else { failed++; if (DEAD.includes(r.error && r.error.code)) invalidTokens.push(batch[idx]); else console.error('push fail:', r.error && r.error.code); }
       });
     } catch (err) {
       console.error('sendToTokens:', err.message);

@@ -285,12 +285,15 @@ router.delete('/messages/:id', async (req, res) => {
   res.json({ success: true });
 });
 
-/** POST /api/chat/push-token  { token } — جهاز السائق لاستقبال الإشعارات */
+/** POST /api/chat/push-token  { token } — جهاز السائق أو المتجر لاستقبال الإشعارات */
 router.post('/push-token', async (req, res) => {
-  if (req.party.kind !== 'driver') return res.status(400).json({ success: false, message: 'للسائقين فقط' });
+  if (!['driver', 'store'].includes(req.party.kind)) return res.status(400).json({ success: false, message: 'للسائقين والمتاجر فقط' });
   const token = String(req.body.token || '').trim();
   if (token.length < 20 || token.length > 300) return res.status(400).json({ success: false, message: 'رمز الجهاز غير صالح' });
-  await Driver.updateOne({ _id: req.party.id }, { $addToSet: { pushTokens: token } });
+  const Model = req.party.kind === 'driver' ? Driver : require('../models/Store');
+  // آخر 10 أجهزة فقط لكل حساب
+  await Model.updateOne({ _id: req.party.id }, { $addToSet: { pushTokens: token } });
+  await Model.updateOne({ _id: req.party.id, 'pushTokens.10': { $exists: true } }, { $pop: { pushTokens: -1 } });
   res.json({ success: true });
 });
 

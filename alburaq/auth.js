@@ -13,7 +13,8 @@ const { effectivePermissionsFor } = require('../utils/permissions');
  *   • السائق: رقم + PIN + رمز تحقق (توكن typ=driver).
  *   • المتجر: رقم + كلمة مرور (توكن typ=store).
  */
-const TTL = { driver: '12h', store: '30d' };
+// «تذكرني»: جلسة طويلة على الجهاز (تُبطَل فوراً بتغيير الـ PIN/كلمة المرور أو التعطيل عبر tokenVersion)
+const TTL = { driver: '12h', store: '7d', driverRemember: '60d', storeRemember: '180d' };
 
 /** صلاحيات البراق في كتالوج ديار (utils/permissions.js). */
 const PERM = {
@@ -32,11 +33,11 @@ function bearerToken(req) {
   return h.startsWith('Bearer ') ? h.slice(7) : null;
 }
 
-const signDriverToken = (driver) =>
-  jwt.sign({ typ: 'driver', sub: String(driver._id), v: driver.tokenVersion || 0 }, cfg.jwtSecret, { expiresIn: TTL.driver });
+const signDriverToken = (driver, remember = false) =>
+  jwt.sign({ typ: 'driver', sub: String(driver._id), v: driver.tokenVersion || 0 }, cfg.jwtSecret, { expiresIn: remember ? TTL.driverRemember : TTL.driver });
 
-const signStoreToken = (store) =>
-  jwt.sign({ typ: 'store', sub: String(store._id), v: store.tokenVersion || 0 }, cfg.jwtSecret, { expiresIn: TTL.store });
+const signStoreToken = (store, remember = false) =>
+  jwt.sign({ typ: 'store', sub: String(store._id), v: store.tokenVersion || 0 }, cfg.jwtSecret, { expiresIn: remember ? TTL.storeRemember : TTL.store });
 
 const SESSION_REPLACED = { message: 'تم تسجيل الدخول بهذا الحساب من جهاز آخر', code: 'SESSION_REPLACED' };
 

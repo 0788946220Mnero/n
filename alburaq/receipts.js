@@ -21,22 +21,32 @@ const fils = (n) => `${Number(n || 0).toLocaleString('en-US')} قرش`;
 const km = (n) => `${Number(n || 0).toFixed(2)} كم`;
 const when = (d) => new Date(d || Date.now()).toLocaleString('ar-JO-u-nu-latn', { timeZone: 'Asia/Amman' });
 
+/* الوصل الحراري: الطابعة الحرارية تطبع نقاطاً سوداء فقط (203 نقطة/إنش) — الخط الرفيع الصغير
+   تضيع نقاطه («شركة» تُطبع «سركه»). لذلك: خط عريض كبير، أسود خالص، بلا رمادي، وشعار بعرض الورقة.
+   @page بلا هوامش: نافذة طباعة المتصفح لا تضيف التاريخ والعنوان، والوصل لا ينقسم لصفحتين. */
 const BASE_CSS = `
-  @page { size: 80mm auto; margin: 2mm; }
+  @page { size: 80mm auto; margin: 0; }
   * { box-sizing: border-box; }
-  body { width: 72mm; margin: 0 auto; font-family: Tahoma, Arial, sans-serif; font-size: 13px; color: #000; direction: rtl; }
-  .logo { display: block; width: 36mm; margin: 0 auto 4px; }
-  h1 { font-size: 17px; text-align: center; margin: 2px 0; }
-  .sub { text-align: center; font-size: 11px; margin-bottom: 6px; }
-  hr { border: none; border-top: 1px dashed #000; margin: 6px 0; }
-  .row { display: flex; justify-content: space-between; gap: 6px; padding: 2px 0; }
-  .row b { font-weight: 700; }
-  table { width: 100%; border-collapse: collapse; font-size: 12px; }
-  td, th { padding: 3px 2px; border-bottom: 1px solid #000; text-align: right; }
-  th { font-weight: 700; }
-  td.num, th.num { text-align: left; white-space: nowrap; }
-  .total { font-size: 16px; font-weight: 800; }
-  .foot { text-align: center; font-size: 11px; margin-top: 8px; }
+  html, body { margin: 0; padding: 0; background: #fff; }
+  body { width: 76mm; padding: 2mm 3mm 4mm; margin: 0 auto; font-family: Arial, Tahoma, 'Segoe UI', sans-serif;
+    font-size: 17px; line-height: 1.45; font-weight: 700; color: #000; direction: rtl;
+    -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .logo { display: block; width: 66mm; max-width: 100%; margin: 0 auto 1mm; image-rendering: pixelated; }
+  h1 { font-size: 27px; font-weight: 900; text-align: center; margin: 1mm 0 0; line-height: 1.2; letter-spacing: 0; }
+  .sub { text-align: center; font-size: 19px; font-weight: 800; margin: 1mm 0 2mm; padding: 1mm 0; border-top: 3px solid #000; border-bottom: 3px solid #000; }
+  hr { border: none; border-top: 2px dashed #000; margin: 2mm 0; }
+  .row { display: flex; justify-content: space-between; align-items: baseline; gap: 3mm; padding: 1mm 0; font-size: 17px; }
+  .row > :first-child { font-weight: 700; }
+  .row > :last-child { font-weight: 900; text-align: left; }
+  .row b { font-weight: 900; }
+  table { width: 100%; border-collapse: collapse; font-size: 16px; }
+  td, th { padding: 1.2mm 0.5mm; border-bottom: 2px solid #000; text-align: right; font-weight: 700; }
+  th { font-weight: 900; font-size: 15px; border-bottom-width: 3px; }
+  td.num, th.num { text-align: left; white-space: nowrap; font-weight: 900; }
+  .total { white-space: nowrap; font-size: 23px; font-weight: 900; padding: 2mm 0; border-top: 3px solid #000; border-bottom: 3px solid #000; margin: 1mm 0; }
+  .stamp { text-align: center; margin-top: 2mm; }
+  .foot { text-align: center; font-size: 15px; font-weight: 700; margin-top: 2mm; line-height: 1.5; }
+  [dir="ltr"] { font-family: Arial, sans-serif; }
 `;
 
 function page(title, logoUrl, body) {
@@ -59,7 +69,7 @@ function priceSheetHtml({ brand, logoUrl, storeName, storeLocation, sheet, setti
     <table><thead><tr><th>المنطقة</th><th class="num">المسافة</th><th class="num">السعر</th></tr></thead>
     <tbody>${rows || '<tr><td colspan="3">لا توجد مناطق مفعّلة</td></tr>'}</tbody></table>
     <hr>
-    <div style="text-align:center;margin-top:6px">${stampSvg({ brand, mono: true, size: 100 })}</div>
+    <div class="stamp">${stampSvg({ brand, mono: true, size: 170 })}</div>
     <div class="foot">فتحة العداد ${fils(settings.meterFlagFils)} + ${fils(settings.perKmFils)} لكل كم هوائي<br>
     السعر تقديري حسب مركز المنطقة، والنهائي يُحسب عند التسليم</div>`;
   return page(`كشف أسعار ${storeName}`, logoUrl, body);
@@ -74,7 +84,7 @@ function invoiceHtml({ brand, logoUrl, invoiceNo, storeName, areaName, customerN
     <div class="row"><b>${list.length > 1 ? `الزبون ${i + 1}` : 'الزبون'}</b><span>${esc(s.name || '—')}</span></div>
     <div class="row"><span>الهاتف</span><span dir="ltr">${esc(s.phone || '—')}</span></div>
     <div class="row"><span>المنطقة</span><span>${esc(s.areaName || '—')}</span></div>
-    ${Number.isFinite(s.lat) ? `<div class="row"><span>الموقع</span><span dir="ltr" style="font-size:10px">${esc(`https://www.google.com/maps?q=${s.lat},${s.lng}`)}</span></div>` : ''}
+    ${Number.isFinite(s.lat) ? `<div class="row"><span>الموقع</span><span dir="ltr" style="font-size:12px;word-break:break-all">${esc(`https://www.google.com/maps?q=${s.lat},${s.lng}`)}</span></div>` : ''}
     ${s.note ? `<div class="row"><span>ملاحظة</span><span>${esc(s.note)}</span></div>` : ''}`).join('<hr>')
     : null;
   const body = `
@@ -88,7 +98,7 @@ function invoiceHtml({ brand, logoUrl, invoiceNo, storeName, areaName, customerN
     <hr>
     <div class="row"><b>الزبون</b><span>${esc(customerName || '—')}</span></div>
     <div class="row"><b>الهاتف</b><span dir="ltr">${esc(customerPhone || '—')}</span></div>
-    ${mapLink ? `<div class="row"><span>الموقع</span><span dir="ltr" style="font-size:10px">${esc(mapLink)}</span></div>` : ''}`}
+    ${mapLink ? `<div class="row"><span>الموقع</span><span dir="ltr" style="font-size:12px;word-break:break-all">${esc(mapLink)}</span></div>` : ''}`}
     <hr>
     <table><tbody>
       <tr><td>فتحة العداد</td><td class="num">${fils(meterFlagFils)}</td></tr>
@@ -117,36 +127,45 @@ function colorLogoDataUri() {
  * mono = أسود للطابعة الحرارية، وإلا أزرق الختم المعتاد.
  */
 function stampSvg({ brand = 'شركة البراق', date = new Date(), mono = false, size = 130 } = {}) {
-  const c = mono ? '#000' : '#1d3f8f';
+  const c = mono ? '#000' : '#2840A7'; // كوبالت-800 — لون الختم
   const d = new Date(date).toLocaleDateString('en-GB', { timeZone: 'Asia/Amman' });
-  const ring = `${brand} للتوصيل • عمّان — الأردن •`;
+  // نصوص أفقية فقط: المتصفحات لا تشكّل الحروف العربية على مسار دائري (textPath) فتختفي حلقة الاسم
+  const op = mono ? 1 : 0.9;
+  const sw = mono ? [7, 3.5] : [5, 2.5];
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 200 200" style="transform:rotate(-8deg)">
-  <defs><path id="ring" d="M100,100 m-74,0 a74,74 0 1,1 148,0 a74,74 0 1,1 -148,0"/></defs>
-  <g fill="none" stroke="${c}" opacity=".88"><circle cx="100" cy="100" r="94" stroke-width="5"/><circle cx="100" cy="100" r="60" stroke-width="2.5"/></g>
-  <text fill="${c}" font-family="Tahoma,Arial" font-size="17" font-weight="700" opacity=".9"><textPath href="#ring" startOffset="0">${esc(ring)}</textPath></text>
-  <text x="100" y="94" text-anchor="middle" fill="${c}" font-family="Tahoma,Arial" font-size="28" font-weight="800" opacity=".92">معتمد</text>
-  <text x="100" y="122" text-anchor="middle" fill="${c}" font-family="Tahoma,Arial" font-size="15" opacity=".9">${esc(d)}</text>
+  <g fill="none" stroke="${c}" opacity="${op}"><circle cx="100" cy="100" r="94" stroke-width="${sw[0]}"/><circle cx="100" cy="100" r="80" stroke-width="${sw[1]}"/>
+    <line x1="34" y1="78" x2="166" y2="78" stroke-width="${sw[1]}"/><line x1="34" y1="134" x2="166" y2="134" stroke-width="${sw[1]}"/></g>
+  <g fill="${c}" opacity="${op}" font-family="Arial,Tahoma" text-anchor="middle" font-weight="900">
+    <text x="100" y="66" font-size="${mono ? 22 : 20}">${esc(brand)}</text>
+    <text x="100" y="118" font-size="${mono ? 40 : 36}">معتمد</text>
+    <text x="100" y="162" font-size="${mono ? 21 : 18}" font-weight="700">${esc(d)}</text>
+  </g>
 </svg>`;
 }
 
+/* الأوراق الرسمية (A4) بهوية PHI: جرافيت للنص، كوبالت للعناوين والمسطرة، نعناعي للفاصل،
+   والقياسات من المقياس S(n) = 8 × φⁿ (بالبكسل عند الطباعة). الخط IBM Plex Sans Arabic مع بديل Tahoma. */
+const PHI_PRINT = { graphite: '#111318', ink2: '#47494D', ink3: '#686A6E', line: '#D4D6D9', soft: '#F5F7FA', cobalt: '#365CFF', cobaltInk: '#2840A7', mint: '#31C6A5' };
 const A4_CSS = `
-  @page { size: A4; margin: 14mm; }
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;600;700&display=swap');
+  @page { size: A4; margin: 13mm; }
   * { box-sizing: border-box; }
-  body { margin: 0; font-family: Tahoma, Arial, sans-serif; color: #111; direction: rtl; font-size: 13px; }
-  .head { display: flex; align-items: center; gap: 14px; border-bottom: 3px solid #8A1620; padding-bottom: 10px; margin-bottom: 14px; }
-  .head img { width: 70px; height: 70px; object-fit: contain; }
-  .head h1 { margin: 0; font-size: 22px; color: #8A1620; }
-  .head .sub { color: #555; font-size: 13px; }
-  .title { font-size: 19px; font-weight: 800; text-align: center; margin: 6px 0 14px; }
-  .meta { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 20px; margin-bottom: 12px; }
+  body { margin: 0; font-family: 'IBM Plex Sans Arabic', Tahoma, Arial, sans-serif; color: ${PHI_PRINT.graphite}; direction: rtl; font-size: 13px; line-height: 1.618; font-variant-numeric: tabular-nums; }
+  .head { display: flex; align-items: center; gap: 13px; border-bottom: 3px solid ${PHI_PRINT.cobalt}; padding-bottom: 8px; margin-bottom: 13px; }
+  .head img { width: 55px; height: 55px; object-fit: contain; }
+  .head h1 { margin: 0; font-size: 21px; line-height: 1.272; color: ${PHI_PRINT.graphite}; }
+  .head .sub { color: ${PHI_PRINT.ink3}; font-size: 13px; }
+  .title { font-size: 19px; font-weight: 700; text-align: center; margin: 5px 0 13px; color: ${PHI_PRINT.cobaltInk}; }
+  .meta { display: grid; grid-template-columns: 1fr 1fr; gap: 3px 21px; margin-bottom: 13px; }
+  .meta b { color: ${PHI_PRINT.ink2}; }
   table { width: 100%; border-collapse: collapse; }
-  th, td { border: 1px solid #bbb; padding: 6px 8px; text-align: right; }
-  th { background: #f3f4f6; }
+  th, td { border: 1px solid ${PHI_PRINT.line}; padding: 5px 8px; text-align: right; }
+  th { background: ${PHI_PRINT.soft}; color: ${PHI_PRINT.ink2}; font-weight: 600; font-size: 11px; }
   td.num, th.num { text-align: left; white-space: nowrap; direction: ltr; }
-  tfoot td { font-weight: 800; background: #fafafa; }
-  .sign { display: flex; justify-content: space-between; align-items: flex-end; margin-top: 28px; }
-  .sign .line { border-top: 1px solid #333; width: 200px; text-align: center; padding-top: 4px; color: #444; }
-  .foot { margin-top: 18px; font-size: 11px; color: #666; text-align: center; }
+  tfoot td { font-weight: 700; background: ${PHI_PRINT.soft}; }
+  .sign { display: flex; justify-content: space-between; align-items: flex-end; margin-top: 34px; }
+  .sign .line { border-top: 1px solid ${PHI_PRINT.ink2}; width: 232px; text-align: center; padding-top: 3px; color: ${PHI_PRINT.ink2}; }
+  .foot { margin-top: 21px; padding-top: 8px; border-top: 2px solid ${PHI_PRINT.mint}; font-size: 11px; color: ${PHI_PRINT.ink3}; text-align: center; }
 `;
 
 function a4Page(title, body, { brand = 'شركة البراق', logoUrl = colorLogoDataUri() } = {}) {
@@ -156,44 +175,111 @@ function a4Page(title, body, { brand = 'شركة البراق', logoUrl = colorL
   ${body}</body></html>`;
 }
 
-/** كشف أسعار المتجر حسب مراكز المناطق — A4 بالشعار والختم المعتمد. */
+/**
+ * ورقة «تسعيرة توصيل شركة البراق — خاصة بـ «المتجر»»: صفحة A4 واحدة دائماً (تُطبع أو تُحفظ PDF).
+ * المناطق المحيطة بالمتجر مرتّبة بالمسافة، بالسعر بالقرش والدينار، مع الشعار والختم المعتمد.
+ * أكثر من 16 منطقة ← عمودان، وأكثر من 40 ← خط أصغر — لتبقى صفحة واحدة.
+ */
 function priceSheetA4Html({ brand, storeName, storePhone, storeLocation, sheet, settings }) {
-  const rows = sheet.map((r, i) => `<tr><td class="num">${i + 1}</td><td>${esc(r.areaName)}</td><td class="num">${km(r.km)}</td><td class="num">${fils(r.estimateFils)}</td></tr>`).join('');
-  return a4Page(`كشف أسعار ${storeName}`, `
-    <div class="title">كشف أسعار التوصيل حسب المناطق</div>
-    <div class="meta">
-      <div><b>المتجر:</b> ${esc(storeName)}</div><div><b>الهاتف:</b> <span dir="ltr">${esc(storePhone || '—')}</span></div>
-      <div><b>موقع المتجر:</b> <span dir="ltr">${storeLocation ? `${storeLocation.lat.toFixed(5)}, ${storeLocation.lng.toFixed(5)}` : '—'}</span></div>
-      <div><b>تاريخ الإصدار:</b> ${esc(when())}</div>
+  const list = [...(sheet || [])].sort((a, b) => a.km - b.km);
+  const n = list.length;
+  const cols = n > 16 ? 2 : 1;
+  const dense = n > 40;
+  const jd = (f) => (Number(f || 0) / 100).toFixed(2);
+  const per = Math.ceil(n / cols) || 1;
+  const chunk = (i) => list.slice(i * per, (i + 1) * per);
+  const table = (rows, offset) => `<table class="ps"><thead><tr><th class="c">#</th><th>المنطقة</th><th class="c">المسافة</th><th class="p">سعر التوصيل</th></tr></thead><tbody>${
+    rows.map((r, i) => `<tr><td class="c n">${offset + i + 1}</td><td class="a">${esc(r.areaName)}</td><td class="c">${km(r.km)}</td>
+      <td class="p"><b>${Number(r.estimateFils || 0).toLocaleString('en-US')}</b> قرش<small>${jd(r.estimateFils)} د.أ</small></td></tr>`).join('')
+  }</tbody></table>`;
+  const tables = n ? Array.from({ length: cols }, (_, i) => table(chunk(i), i * per)).join('') : '<div class="empty">لا توجد مناطق مفعّلة بعد</div>';
+  const date = new Date().toLocaleDateString('ar-JO-u-nu-latn', { timeZone: 'Asia/Amman', year: 'numeric', month: 'long', day: 'numeric' });
+  const P = PHI_PRINT;
+  return `<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><title>تسعيرة توصيل ${esc(brand)} — ${esc(storeName)}</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;600;700&display=swap');
+  @page { size: A4; margin: 0; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: #fff; }
+  body { font-family: 'IBM Plex Sans Arabic', Tahoma, Arial, sans-serif; color: ${P.graphite}; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .sheet { width: 210mm; height: 297mm; padding: 13mm 13mm 10mm; display: flex; flex-direction: column; overflow: hidden; position: relative; background: #fff; }
+  .top { display: flex; align-items: center; gap: 8mm; padding-bottom: 5mm; border-bottom: 1.2mm solid ${P.cobalt}; }
+  .top img { width: 40mm; height: 40mm; object-fit: contain; }
+  .top .t1 { font-size: 13px; font-weight: 700; color: ${P.cobaltInk}; letter-spacing: 0; }
+  .top h1 { margin: 1mm 0 0; font-size: 34px; line-height: 1.2; font-weight: 700; }
+  .top .t3 { font-size: 15px; color: ${P.ink2}; margin-top: 1mm; }
+  .for { margin: 6mm 0 4mm; display: flex; align-items: stretch; border: 0.5mm solid ${P.graphite}; border-radius: 2mm; overflow: hidden; }
+  .for .k { background: ${P.graphite}; color: #fff; padding: 3mm 5mm; font-size: 15px; font-weight: 700; display: flex; align-items: center; }
+  .for .v { padding: 2mm 5mm; flex: 1; display: flex; flex-direction: column; justify-content: center; }
+  .for .v b { font-size: 24px; line-height: 1.25; }
+  .for .v span { font-size: 13px; color: ${P.ink3}; }
+  .for .d { padding: 2mm 5mm; text-align: left; font-size: 13px; color: ${P.ink2}; display: flex; flex-direction: column; justify-content: center; border-inline-start: 0.3mm solid ${P.line}; }
+  .rule { display: flex; gap: 3mm; align-items: center; background: ${P.soft}; border-inline-start: 1.2mm solid ${P.mint}; padding: 3mm 4mm; font-size: 14px; margin-bottom: 5mm; }
+  .rule b { color: ${P.cobaltInk}; }
+  .grid { display: grid; grid-template-columns: repeat(${cols}, 1fr); gap: 6mm; flex: 1; align-content: start; }
+  table.ps { width: 100%; border-collapse: collapse; font-size: ${dense ? 12 : cols > 1 ? 14 : 16}px; }
+  table.ps th { background: ${P.graphite}; color: #fff; font-weight: 700; font-size: ${dense ? 11 : 13}px; padding: ${dense ? 1.5 : 2.5}mm 3mm; text-align: right; }
+  table.ps th.c, table.ps td.c { text-align: center; white-space: nowrap; }
+  table.ps th.p, table.ps td.p { text-align: left; white-space: nowrap; }
+  table.ps td { padding: ${dense ? 1.2 : cols > 1 ? 2 : 2.6}mm 3mm; border-bottom: 0.3mm solid ${P.line}; }
+  table.ps tbody tr:nth-child(even) td { background: ${P.soft}; }
+  table.ps td.n { color: ${P.ink3}; font-size: 0.85em; width: 9mm; }
+  table.ps td.a { font-weight: 700; }
+  table.ps td.p b { font-size: 1.3em; color: ${P.cobaltInk}; }
+  table.ps td.p small { display: block; font-size: 0.72em; color: ${P.ink3}; }
+  .empty { padding: 20mm; text-align: center; color: ${P.ink3}; font-size: 18px; border: 0.3mm dashed ${P.line}; }
+  .bottom { margin-top: 5mm; display: grid; grid-template-columns: 1fr auto 1fr; gap: 6mm; align-items: end; }
+  .note { font-size: 12px; line-height: 1.7; color: ${P.ink2}; }
+  .sig { border-top: 0.3mm solid ${P.ink2}; padding-top: 1.5mm; text-align: center; font-size: 13px; color: ${P.ink2}; }
+  .foot { margin-top: 4mm; padding-top: 2mm; border-top: 0.6mm solid ${P.mint}; display: flex; justify-content: space-between; font-size: 11px; color: ${P.ink3}; }
+</style></head><body>
+<div class="sheet" id="sheet">
+  <div class="top">
+    <img src="${colorLogoDataUri()}" alt="">
+    <div>
+      <div class="t1">للمناطق المحيطة بالمتجر</div>
+      <h1>تسعيرة توصيل ${esc(brand)}</h1>
+      <div class="t3">الأسعار محسوبة من موقع المتجر حتى مركز كل منطقة</div>
     </div>
-    <table><thead><tr><th class="num">#</th><th>المنطقة (المركز)</th><th class="num">المسافة الهوائية</th><th class="num">سعر التوصيل التقديري</th></tr></thead>
-      <tbody>${rows || '<tr><td colspan="4">لا توجد مناطق مفعّلة</td></tr>'}</tbody></table>
-    <p style="margin-top:12px">التسعير: فتحة العداد <b>${fils(settings.meterFlagFils)}</b> + <b>${fils(settings.perKmFils)}</b> لكل كيلومتر هوائي من المتجر.
-    السعر أعلاه تقديري حتى مركز المنطقة، والنهائي يُحسب عند التسليم من موقع الزبون الفعلي.</p>
-    <div class="sign"><div class="line">توقيع المتجر</div><div>${stampSvg({ brand })}</div><div class="line">إدارة ${esc(brand)}</div></div>
-    <div class="foot">وثيقة صادرة عن ${esc(brand)} — صالحة حتى تغيير موقع المتجر أو الأسعار</div>`, { brand });
+  </div>
+  <div class="for">
+    <div class="k">خاصة بـ</div>
+    <div class="v"><b>${esc(storeName)}</b><span dir="ltr" style="text-align:right">${esc(storePhone || '')}</span></div>
+    <div class="d"><span>تاريخ الإصدار</span><b>${esc(date)}</b></div>
+  </div>
+  <div class="rule">التسعير: فتحة العداد <b>${fils(settings.meterFlagFils)}</b> + <b>${fils(settings.perKmFils)}</b> لكل كيلومتر هوائي · ${n} منطقة</div>
+  <div class="grid">${tables}</div>
+  <div class="bottom">
+    <div class="note">السعر تقديري حتى مركز المنطقة. السعر النهائي يُحسب عند التسليم من موقع الزبون الفعلي.
+      ${storeLocation ? `<br>موقع المتجر: <span dir="ltr">${storeLocation.lat.toFixed(5)}, ${storeLocation.lng.toFixed(5)}</span>` : ''}</div>
+    <div>${stampSvg({ brand, size: 130 })}</div>
+    <div class="sig">إدارة ${esc(brand)}</div>
+  </div>
+  <div class="foot"><span>وثيقة صادرة عن ${esc(brand)} للتوصيل</span><span>صالحة حتى تغيير موقع المتجر أو الأسعار</span></div>
+</div>
+</body></html>`;
 }
 
 /** تصريح سائق — A4 (يُقص كبطاقة) بالشعار والختم. */
 function permitHtml({ brand, driver }) {
   const card = `
-    <div style="border:3px solid #8A1620;border-radius:16px;padding:18px;max-width:560px;margin:0 auto;position:relative">
-      <div style="display:flex;align-items:center;gap:12px;border-bottom:2px solid #D4A017;padding-bottom:8px">
-        <img src="${colorLogoDataUri()}" style="width:64px;height:64px;object-fit:contain" alt="">
-        <div><div style="font-size:20px;font-weight:800;color:#8A1620">${esc(brand)}</div><div style="color:#555">تصريح سائق توصيل</div></div>
-        <div style="margin-inline-start:auto;text-align:left;direction:ltr;font-weight:800;font-size:16px">${esc(driver.permitNo)}</div>
+    <div style="border:2px solid ${PHI_PRINT.graphite};border-top:5px solid ${PHI_PRINT.cobalt};border-radius:8px;padding:21px;max-width:608px;margin:0 auto;position:relative">
+      <div style="display:flex;align-items:center;gap:13px;border-bottom:2px solid ${PHI_PRINT.mint};padding-bottom:8px">
+        <img src="${colorLogoDataUri()}" style="width:55px;height:55px;object-fit:contain" alt="">
+        <div><div style="font-size:21px;font-weight:700;color:${PHI_PRINT.graphite}">${esc(brand)}</div><div style="color:${PHI_PRINT.ink3}">تصريح سائق توصيل</div></div>
+        <div style="margin-inline-start:auto;text-align:left;direction:ltr;font-weight:700;font-size:16px;color:${PHI_PRINT.cobaltInk}">${esc(driver.permitNo)}</div>
       </div>
-      <table style="margin-top:12px">
-        <tr><th style="width:38%">الاسم</th><td style="font-size:17px;font-weight:700">${esc(driver.name)}</td></tr>
+      <table style="margin-top:13px">
+        <tr><th style="width:38%">الاسم</th><td style="font-size:16px;font-weight:700">${esc(driver.name)}</td></tr>
         <tr><th>الهاتف</th><td dir="ltr" style="text-align:right">${esc(driver.phone)}</td></tr>
         ${driver.nationalId ? `<tr><th>الرقم الوطني</th><td dir="ltr" style="text-align:right">${esc(driver.nationalId)}</td></tr>` : ''}
         <tr><th>المركبة</th><td>${esc(driver.vehicle || '—')}${driver.plate ? ` · لوحة <span dir="ltr">${esc(driver.plate)}</span>` : ''}</td></tr>
         <tr><th>تاريخ الإصدار</th><td>${esc(new Date(driver.permitIssuedAt).toLocaleDateString('ar-JO-u-nu-latn', { timeZone: 'Asia/Amman' }))}</td></tr>
         <tr><th>صالح حتى</th><td><b>${esc(new Date(driver.permitExpiresAt).toLocaleDateString('ar-JO-u-nu-latn', { timeZone: 'Asia/Amman' }))}</b></td></tr>
       </table>
-      <p style="margin:10px 0 0">يُصرَّح لحامل هذا التصريح بالعمل سائقاً لدى ${esc(brand)} لتوصيل الطلبات من المتاجر المتعاقدة،
+      <p style="margin:8px 0 0">يُصرَّح لحامل هذا التصريح بالعمل سائقاً لدى ${esc(brand)} لتوصيل الطلبات من المتاجر المتعاقدة،
       ويُرجى من الجهات المعنية تسهيل مهمته. يُلغى التصريح بانتهاء مدته أو بإيقاف السائق.</p>
-      <div class="sign" style="margin-top:14px"><div class="line">توقيع السائق</div><div>${stampSvg({ brand, size: 120 })}</div><div class="line">المدير المسؤول</div></div>
+      <div class="sign" style="margin-top:13px"><div class="line">توقيع السائق</div><div>${stampSvg({ brand, size: 120 })}</div><div class="line">المدير المسؤول</div></div>
     </div>`;
   return a4Page(`تصريح ${driver.name}`, `<div class="title">تصريح سائق</div>${card}`, { brand });
 }
@@ -211,7 +297,7 @@ function paymentReceiptHtml({ brand, s, balanceAfterFils }) {
     ${balanceAfterFils != null ? `<div class="row"><b>المتبقي عليه</b><span>${fils(balanceAfterFils)}</span></div>` : ''}
     <hr>
     <div class="row"><span>المستلم</span><span>${esc(s.byName || '—')}</span></div>
-    <div style="text-align:center;margin-top:6px">${stampSvg({ brand, mono: true, size: 110 })}</div>
+    <div class="stamp">${stampSvg({ brand, mono: true, size: 170 })}</div>
     <div class="foot">شكراً لكم</div>`);
 }
 
@@ -234,7 +320,7 @@ function tripReceiptHtml({ brand, t, viewer = 'driver' }) {
     <div class="row"><span>المسافة × ${fils(p.perKmFils)}</span><span>${fils(p.distanceFils)}</span></div>
     <div class="row total"><span>على المتجر</span><span>${fils(p.storeChargeFils)}</span></div>
     ${viewer === 'admin' ? `<div class="row"><span>للسائق</span><span>${fils(p.driverFils)}</span></div><div class="row"><b>حصة الشركة على السائق</b><span>${fils(p.companyFils)}</span></div>` : ''}
-    <div style="text-align:center;margin-top:6px">${stampSvg({ brand, mono: true, size: 96 })}</div>`);
+    <div class="stamp">${stampSvg({ brand, mono: true, size: 170 })}</div>`);
 }
 
 /** كشف جرد السائق (حراري): التوصيلات، ما حصّله، أجرته، حصة الشركة عليه، ما دفعه، والرصيد. */
@@ -251,9 +337,9 @@ function driverStatementHtml({ brand, driver, l, from, to }) {
     <div class="row"><span>أجرته</span><span>${fils(l.driverFils)}</span></div>
     <div class="row"><b>حصة الشركة عليه</b><span>${fils(l.companyFils)}</span></div>
     <div class="row"><span>دفع للشركة</span><span>${fils(l.paidFils)}</span></div>
-    <div class="row total"><span>المتبقي عليه (الكل)</span><span>${fils(l.balanceFils)}</span></div>
+    <div class="row total"><span>المتبقي عليه</span><span>${fils(l.balanceFils)}</span></div>
     ${rows ? `<hr><table><thead><tr><th>المتجر</th><th class="num">كم</th><th class="num">للشركة</th></tr></thead><tbody>${rows}</tbody></table>` : ''}
-    <div style="text-align:center;margin-top:6px">${stampSvg({ brand, mono: true, size: 96 })}</div>`);
+    <div class="stamp">${stampSvg({ brand, mono: true, size: 170 })}</div>`);
 }
 
 /** كشف حساب المتجر — A4 بالشعار والختم. */

@@ -16,6 +16,8 @@ const storeSchema = new Schema(
     failedAttempts: { type: Number, default: 0 },
     lockedUntil: { type: Date, default: null },
     tokenVersion: { type: Number, default: 0 },
+    // أجهزة المتجر لإشعارات الجوال (قبول السائق، وصوله، التسليم…)
+    pushTokens: { type: [String], default: [] },
   },
   { timestamps: true }
 );

@@ -92,10 +92,16 @@ const sendToTokens = async (tokens, { title, body, data = {} }) => {
     data: Object.fromEntries(Object.entries(data).map(([k, v]) => [k, String(v)])),
     android: {
       priority: 'high',
-      notification: { channelId: 'orders_channel', sound: 'default' },
+      notification: { channelId: 'orders_channel', sound: 'default', defaultVibrateTimings: false, vibrateTimingsMillis: [0, 1000, 150, 1000, 150, 1000] },
     },
     apns: {
-      payload: { aps: { sound: 'default', badge: 1 } },
+      headers: { 'apns-priority': '10' },
+      payload: { aps: { sound: 'default', badge: 1, 'interruption-level': 'time-sensitive' } },
+    },
+    // المتصفح (اللوحة المثبتة على الجوال): يبقى على الشاشة حتى يُفتح، باهتزاز قوي
+    webpush: {
+      headers: { Urgency: 'high' },
+      notification: { title, body, dir: 'rtl', lang: 'ar', requireInteraction: true, renotify: true, tag: data.orderId ? 'order-' + data.orderId : 'diyar-order', vibrate: [1000, 150, 1000, 150, 1000] },
     },
   };
 

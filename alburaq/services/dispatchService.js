@@ -18,6 +18,7 @@ const Driver = require('../models/Driver');
 const Area = require('../models/Area');
 const Rating = require('../models/Rating');
 const realtime = require('../realtime');
+const Store = require('../models/Store');
 const { getSettings } = require('../settings');
 const { pickCandidates, lowRatedDriverIds } = require('../dispatch');
 const { deliveryPricing } = require('../pricing');
@@ -25,6 +26,7 @@ const { haversineKm, isValidPoint, isWithinMeters } = require('../geo');
 const { normalizePhone } = require('../security');
 const { publicTrip } = require('../publicTrip');
 const { publicDriver } = require('../publicDriver');
+const { driverEta } = require('../eta');
 
 const SWEEP_MS = 1000; // فحص كل ثانية حتى لا تتأخر الموجة التالية عن المهلة
 const MAX_OPEN_PER_STORE = Number(process.env.MAX_OPEN_PER_STORE || 15);
@@ -35,12 +37,79 @@ const tripHooks = [];
 function onTripChanged(fn) { tripHooks.push(fn); }
 
 /** يبث الطلب لكل طرف بالشكل المناسب له (الزبون يظهر حسب مرحلة الرحلة). */
-function publishTrip(trip) {
+/* ── إشعارات المتجر على جواله (حتى والصفحة مغلقة): قبول السائق، وصوله، التسليم، لا سائق، الإلغاء ── */
+const lastStatus = new Map(); // tripId → آخر حالة أُشعر بها المتجر
+const arrivedNotified = new Set(); // tripId — «السائق وصل» مرة واحدة
+const STORE_LINK = './?as=store';
+
+/** إشعار دفع لكل أجهزة المتجر المسجّلة (يحذف الرموز الميتة). */
+async function pushToStore(storeId, message) {
+  const push = require('./push');
+  const s = await Store.findById(storeId, { pushTokens: 1 }).lean();
+  const tokens = (s && s.pushTokens) || [];
+  if (!tokens.length) return;
+  const res = await push.sendToTokens(tokens, { ...message, data: { link: STORE_LINK, ...(message.data || {}) } });
+  if (res.invalidTokens.length) await Store.updateOne({ _id: storeId }, { $pull: { pushTokens: { $in: res.invalidTokens } } });
+}
+
+function notifyStoreStatus(trip, cancelledByStore = false) {
+  const id = String(trip._id);
+  const prev = lastStatus.get(id);
+  if (prev === trip.status) return;
+  lastStatus.set(id, trip.status);
+  if (lastStatus.size > 5000) lastStatus.delete(lastStatus.keys().next().value);
+  if (!prev && trip.status === 'searching') return; // الطلب أُرسل للتو من المتجر نفسه
+  const to = (title, body, urgent = false) => pushToStore(trip.store, { title, body, urgent, tag: 'trip-' + id, data: { kind: 'trip', tripId: id } })
+    .catch((e) => console.error('store push:', e.message));
+  if (trip.status === 'assigned') to(`✅ قبل ${trip.driverName || 'السائق'} طلبك`, `في الطريق إليك لاستلام طلب ${trip.areaName} — افتح لترى مكانه وكم يحتاج`, true);
+  else if (trip.status === 'completed') to('✅ تم تسليم الطلب', `${trip.areaName}${trip.receiptNo ? ' · ' + trip.receiptNo : ''} — قيّم السائق`);
+  else if (trip.status === 'expired') to('⚠️ لا يوجد سائق متاح الآن', `طلب ${trip.areaName} لم يقبله أحد — أعد الطلب بعد قليل`, true);
+  else if (trip.status === 'cancelled' && !cancelledByStore) to('⛔ أُلغي طلب التوصيل', `طلب ${trip.areaName} أُلغي من إدارة البراق`, true);
+}
+
+function publishTrip(trip, { cancelledByStore = false } = {}) {
   for (const h of tripHooks) { try { Promise.resolve(h(trip)).catch(() => {}); } catch (_) {} }
+  try { notifyStoreStatus(trip, cancelledByStore); } catch (_) { /* الإشعار لا يعطّل البث */ }
   realtime.toStore(trip.store, { type: 'trip.updated', trip: publicTrip(trip, 'store') });
   realtime.toAdmins({ type: 'trip.updated', trip: publicTrip(trip, 'admin') });
   realtime.toOperators({ type: 'trip.updated', trip: publicTrip(trip, 'admin') });
   if (trip.driver) realtime.toDriver(trip.driver, { type: 'trip.updated', trip: publicTrip(trip, 'driver') });
+  if (trip.driver && ['assigned', 'picked'].includes(trip.status)) publishDriverEta(trip).catch(() => {});
+}
+
+/** المتجر يرى السائق المقبول: اسمه، رقمه، مركبته، موقعه، وكم يحتاج للوصول (يُحدَّث مع كل موقع يرسله السائق). */
+async function publishDriverEta(trip, driverDoc = null) {
+  const d = driverDoc || (await Driver.findById(trip.driver).select('name phone vehicle plate lastLocation ratingSum ratingCount').lean());
+  const info = driverEta(trip, d);
+  if (!info) return null;
+  const tid = String(trip._id);
+  if (info.arrived && info.target === 'store' && trip.status === 'assigned' && !arrivedNotified.has(tid)) {
+    arrivedNotified.add(tid);
+    if (arrivedNotified.size > 5000) arrivedNotified.delete(arrivedNotified.values().next().value);
+    pushToStore(trip.store, { title: `🛵 ${info.driver.name} وصل إلى المطعم`, body: `جهّز طلب ${trip.areaName} وسلّمه للسائق`, urgent: true, tag: 'trip-' + tid, data: { kind: 'trip', tripId: tid } })
+      .catch((e) => console.error('store push:', e.message));
+  }
+  realtime.toStore(trip.store, { type: 'trip.driver', ...info });
+  realtime.toAdmins({ type: 'trip.driver', ...info });
+  return info;
+}
+
+/** من مسار موقع السائق: كل رحلاته المفتوحة تُبلغ متاجرها بموقعه ووقت وصوله. */
+async function onDriverMoved(driverDoc) {
+  const open = await Trip.find({ driver: driverDoc._id, status: { $in: ['assigned', 'picked'] } }).lean();
+  for (const t of open) await publishDriverEta(t, driverDoc).catch(() => {});
+}
+
+/** طلب جديد (متجر/كول سنتر/مطعم): إشعار على أجهزة الإدارة المثبّتة — «انقر لتتبع الطلب». */
+function notifyNewTrip(trip) {
+  try {
+    const alerts = require('../../services/staffAlertService');
+    const by = trip.source && trip.source.kind;
+    alerts.emit('brq.trip', {
+      userName: trip.storeName,
+      details: { store: trip.storeName, area: trip.areaName, stops: (trip.stops || []).length || 1, estimate: trip.estimateFils, by, orderNumber: trip.source && trip.source.orderNumber },
+    });
+  } catch (_) { /* الإشعار لا يعطّل الطلب أبداً */ }
 }
 
 function publishDriver(driver) {
@@ -139,17 +208,31 @@ async function pushToDrivers(driverIds, message) {
  * عرض الطلب كإشعار قوي: تطبيق السائق يعرضه ملء الشاشة بصوت إنذار حتى والشاشة مقفلة،
  * ويقبل/يرفض منه مباشرة. يصل لكل مرشح (والتطبيق يتجاهله إن كانت الصفحة مفتوحة أمامه).
  */
-async function notifyOfferPush(driverIds, trip) {
+async function notifyOfferPush(driverIds, trip, { reminder = false } = {}) {
   const settings = await getSettings();
   const expiresAt = trip.waveEndsAt ? new Date(trip.waveEndsAt) : new Date(Date.now() + settings.offerTimeoutSec * 1000);
+  const left = (expiresAt - Date.now()) / 1000;
+  if (left < 2) return;
+  // تذكير قبل انتهاء المهلة لمن لم يرد بعد: يرنّ ويهتز مرة ثانية (نفس الإشعار — لا تكرار في القائمة)
+  if (!reminder && left >= 8) {
+    const t = setTimeout(async () => {
+      try {
+        const fresh = await Trip.findById(trip._id, { status: 1, wave: 1, offers: 1, waveEndsAt: 1, storeName: 1, areaName: 1, stops: 1, estimateFils: 1 }).lean();
+        if (!fresh || fresh.status !== 'searching' || fresh.wave !== trip.wave) return;
+        const waiting = (fresh.offers || []).filter((o) => o.status === 'sent' && driverIds.some((id) => String(id) === String(o.driver))).map((o) => o.driver);
+        if (waiting.length) await notifyOfferPush(waiting, fresh, { reminder: true });
+      } catch (e) { console.error('offer reminder:', e.message); }
+    }, Math.round(left * 500));
+    if (t.unref) t.unref();
+  }
   await pushToDrivers(driverIds, {
-    title: '🚨 طلب توصيل جديد',
-    body: `${trip.storeName} ← ${trip.areaName}`,
+    title: reminder ? '🚨 طلب وارد — لم ترد بعد!' : '🚨 طلب وارد — البراق',
+    body: `${trip.storeName} ← ${trip.areaName}${reminder ? ' · ثوانٍ وينتقل لغيرك' : ''}`,
     urgent: true,
     ttlSec: Math.max(1, (expiresAt - Date.now()) / 1000),
     tag: `offer-${trip._id}`,
     data: {
-      kind: 'offer', link: './', tripId: String(trip._id), storeName: trip.storeName, areaName: trip.areaName,
+      kind: 'offer', link: './?as=driver', tripId: String(trip._id), storeName: trip.storeName, areaName: trip.areaName,
       stopsCount: (trip.stops || []).length || 1, estimateFils: trip.estimateFils ?? '',
       meterFlagFils: settings.meterFlagFils, driverPerKmFils: settings.perKmFils - settings.companyCutPerKmFils,
       expiresAt: expiresAt.toISOString(),
@@ -240,6 +323,7 @@ async function createTripForStore(store, body, source = null) {
     requestedAt: new Date(),
     ...(source ? { source } : {}),
   });
+  notifyNewTrip(trip);
   const opened = await openNextWave(trip._id);
   return opened || (await Trip.findById(trip._id));
 }
@@ -448,8 +532,11 @@ async function cancelTrip(tripId, { storeId = null, admin = false } = {}) {
   if (trip.driver) {
     const d = await releaseTrip(trip.driver, trip._id);
     if (d) publishDriver(d);
+    // السائق كان في طريقه: إشعار قوي حتى لا يكمل لطلب ملغى
+    pushToDrivers([trip.driver], { title: '⛔ أُلغي الطلب', body: `${trip.storeName} ← ${trip.areaName} — لا تكمل إليه`, urgent: true, tag: 'trip-' + trip._id, data: { kind: 'trip.cancelled', link: './?as=driver', tripId: String(trip._id) } })
+      .catch((e) => console.error('cancel push:', e.message));
   }
-  publishTrip(trip);
+  publishTrip(trip, { cancelledByStore: !!storeId });
   return trip;
 }
 
@@ -489,6 +576,8 @@ function startSweeper() {
 function stopSweeper() { if (sweeper) clearInterval(sweeper); sweeper = null; }
 
 module.exports = {
+  pushToStore, pushToDrivers,
   createTripForStore, buildStops, acceptOffer, declineOffer, confirmPickup, completeTrip, completeStop, setStopLocation, cancelTrip,
   rateDriver, sweep, startSweeper, stopSweeper, publishTrip, publishDriver, httpError, releaseTrip, onTripChanged,
+  publishDriverEta, onDriverMoved,
 };

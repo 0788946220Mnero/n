@@ -272,12 +272,14 @@ const broadcast = (type, payload) => {
 
 const emitOrderCreated = (order) => { broadcast('order.created', { order: serializeOrder(order) }); emitTracking(order); };
 const emitOrderUpdated = (order) => { broadcast('order.updated', { order: serializeOrder(order) }); emitTracking(order); };
+const customerPush = (order, prev) => { try { require('./customerStatusPush').notify(order, prev); } catch (_) { /* لا يعطّل البث */ } };
 const emitOrderStatusChanged = (order, previousStatus) => {
   broadcast('order.status_changed', {
     order: serializeOrder(order),
     previousStatus: previousStatus || null,
   });
   emitTracking(order);
+  customerPush(order, previousStatus); // إشعار الزبون على جواله بحالة طلبه
 };
 /** رسالة زبون جديدة أو ردّ عليها: اللوحة تُنبَّه (صوت + شارة)، والزبون يرى الحالة. */
 const serializeRequest = (r) => ({
@@ -289,7 +291,7 @@ const emitOrderRequest = (order, request) => {
   broadcast('order.request', { order: serializeOrder(order), request: serializeRequest(request) });
   emitTracking(order);
 };
-const emitOrderCancelled = (order) => { broadcast('order.cancelled', { order: serializeOrder(order) }); emitTracking(order); };
+const emitOrderCancelled = (order) => { broadcast('order.cancelled', { order: serializeOrder(order) }); emitTracking(order); customerPush(order, null); };
 
 /**
  * جلسة واحدة لكل مستخدم: عند دخول جديد تُبلَّغ اتصالات الجلسات الأخرى

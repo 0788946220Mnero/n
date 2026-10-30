@@ -233,7 +233,7 @@ async function buildPass(acc, prog, ctx = {}) {
   const creds = credentials();
   const logo = await fetchPng(ctx.logoUrl);
   const bg = (prog.colors && prog.colors.background) || '#1f1a17';
-  const dot = (prog.colors && prog.colors.label) || '#d4a017';
+  const dot = (prog.colors && prog.colors.label) || '#31C6A5';
   const files = {
     'pass.json': Buffer.from(JSON.stringify(passJson(acc, prog, ctx)), 'utf8'),
     'icon.png': solidPng(29, 29, bg, dot),

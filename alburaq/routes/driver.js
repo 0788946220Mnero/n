@@ -49,7 +49,7 @@ router.post('/login', loginLimiter, async (req, res) => {
   }
   await Driver.updateOne({ _id: driver._id }, { $set: { failedAttempts: 0, lockedUntil: null } });
   const fresh = await Driver.findById(driver._id);
-  return res.json({ success: true, token: signDriverToken(fresh), driver: publicDriver(fresh, now) });
+  return res.json({ success: true, token: signDriverToken(fresh, req.body.remember !== false), driver: publicDriver(fresh, now) });
 });
 
 router.get('/me', requireDriver, async (req, res) => {
@@ -67,6 +67,8 @@ router.post('/location', requireDriver, async (req, res) => {
   const loc = { lat, lng, accuracy: opt(req.body.accuracy), heading: opt(req.body.heading), speed: opt(req.body.speed), at: new Date() };
   const updated = await Driver.findByIdAndUpdate(req.driver._id, { $set: { lastLocation: loc } }, { new: true });
   realtime.toAdmins({ type: 'driver.location', driver: publicDriver(updated) });
+  // المتاجر التي ينتظرها هذا السائق ترى موقعه ووقت وصوله لحظياً
+  if (updated && (updated.currentTrips || []).length) dispatch.onDriverMoved(updated).catch(() => {});
   res.json({ success: true });
 });
 
@@ -128,6 +130,15 @@ router.post('/trips/:id/complete', requireDriver, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+/** GET /api/brq/driver/history?limit — سجل التوصيلات المكتملة (تختفي من الخريطة وتدخل هنا) */
+router.get('/history', requireDriver, async (req, res, next) => {
+  try {
+    const limit = Math.max(1, Math.min(100, Number(req.query.limit) || 40));
+    const list = await Trip.find({ driver: req.driver._id, status: 'completed' }).sort({ completedAt: -1 }).limit(limit).lean();
+    res.json({ success: true, trips: list.map((t) => ({ ...publicTrip(t, 'driver'), completedAt: t.completedAt, receiptNo: t.receiptNo || '' })) });
+  } catch (e) { next(e); }
+});
+
 /** GET /api/brq/driver/ledger — جرد السائق: أجرته فقط */
 router.get('/ledger', requireDriver, async (req, res, next) => {
   try { res.json({ success: true, ...(await driverLedger(req.driver._id, { from: req.query.from, to: req.query.to })) }); }
@@ -148,6 +159,12 @@ router.get('/trips/:id/receipt', requireDriver, async (req, res, next) => {
 router.post('/logout', requireDriver, async (req, res) => {
   await Driver.updateOne({ _id: req.driver._id }, { $inc: { tokenVersion: 1 } });
   res.json({ success: true });
+});
+
+/** GET /notices — تنبيهات إدارة البراق لهذا السائق */
+router.get('/notices', requireDriver, async (req, res, next) => {
+  try { res.json({ success: true, notices: await require('../services/noticeService').listFor('driver', req.driver._id, req.query.limit) }); }
+  catch (e) { next(e); }
 });
 
 module.exports = router;

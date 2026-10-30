@@ -193,6 +193,52 @@ test('الروابط المختصرة: الخادم يتتبّع التحويل�
   assert.equal(allowed('localhost'), false);
 });
 
+test('روابط جوجل الصعبة: دبوس مُسقط بالدرجات، Plus Code، معكوسة، بلا http، وأسماء أماكن', () => {
+  const near = (p, lat, lng, eps = 2e-4) => p && Math.abs(p.lat - lat) < eps && Math.abs(p.lng - lng) < eps;
+  // دبوس مُسقط يدوياً ثم «مشاركة»: الإحداثيات بالدرجات داخل المسار
+  assert.ok(near(LocationLink.parse("https://www.google.com/maps/place/31%C2%B057'14.2%22N+35%C2%B054'38.3%22E/@31.9539444,35.9084461,17z/data=!3m1!4b1"), 31.95394, 35.91064));
+  // Plus Code كامل ومختصر (يكتمل من عمّان أو من موقع المطعم)
+  const full = LocationLink.olcEncode(31.953949, 35.910635);
+  assert.ok(near(LocationLink.parse(full), 31.953949, 35.910635));
+  assert.ok(near(LocationLink.parse(full.slice(4) + ' عمّان، الأردن'), 31.953949, 35.910635));
+  assert.ok(near(LocationLink.parse(`https://www.google.com/maps/search/${encodeURIComponent(full.slice(4))}+Amman`), 31.953949, 35.910635));
+  const irbid = LocationLink.olcEncode(32.5568, 35.8469);
+  assert.ok(near(LocationLink.parse(irbid.slice(4), { ref: { lat: 32.55, lng: 35.85 } }), 32.5568, 35.8469));
+  // خط الطول أولاً بالخطأ ← يُصحَّح داخل الأردن
+  assert.deepEqual(LocationLink.parse('https://maps.google.com/?q=35.910635,31.953949'), { lat: 31.953949, lng: 35.910635 });
+  assert.deepEqual(LocationLink.parse('https://www.google.com/maps/dir//31.953949,35.910635/@31.9,35.9,15z'), { lat: 31.953949, lng: 35.910635 });
+  // رابط منسوخ بلا https
+  assert.equal(LocationLink.isShortLink('موقعي maps.app.goo.gl/AbCd123'), true);
+  assert.equal(LocationLink.isShortLink('https://maps.apple/p/AbC.dEf'), true);
+  // رقم هاتف دولي ليس Plus Code
+  assert.equal(LocationLink.parse('اتصل على +962790000000'), null);
+  assert.equal(LocationLink.placeQuery('https://www.google.com/maps/place/%D9%85%D9%88%D9%84+%D9%85%D9%83%D8%A9/data=!4m2'), 'مول مكة');
+});
+
+test('الخادم: إحداثيات من صفحة المكان، وتقريبية من اسم المكان عند غيابها', async () => {
+  const mk = (map) => async (u) => {
+    const r = map(u);
+    return { status: r.status || 200, headers: { get: (k) => (k === 'location' ? r.location : null) }, text: async () => r.body || '' };
+  };
+  // التحويل ينتهي بصفحة بلا إحداثيات في الرابط، لكنها في og:image
+  const page = mk((u) => (u.includes('maps.app.goo.gl') ? { status: 302, location: 'https://www.google.com/maps/place/x/data=!4m2!3m1!1s0x15' }
+    : { body: '<meta property="og:image" content="https://maps.google.com/maps/api/staticmap?center=31.953949%2C35.910635&amp;zoom=15">' }));
+  const a = await resolve('https://maps.app.goo.gl/Page1', { fetchImpl: page });
+  assert.deepEqual([a.lat, a.lng], [31.953949, 35.910635]);
+  // حالة تطبيق خرائط جوجل [[[zoom,lng,lat]
+  const app = mk(() => ({ body: 'window.APP_INITIALIZATION_STATE=[[[3712.5,35.910635,31.953949],[0,0,0]' }));
+  const b = await resolve('https://maps.app.goo.gl/App1', { fetchImpl: app });
+  assert.deepEqual([b.lat, b.lng], [31.953949, 35.910635]);
+  // لا إحداثيات أبداً، لكن اسم المكان في الرابط ← بحث بالاسم (تقريبي)
+  const named = mk((u) => (u.includes('goo.gl') ? { status: 302, location: 'https://www.google.com/maps/place/%D8%AF%D9%88%D8%A7%D8%B1+%D8%A7%D9%84%D8%AF%D8%A7%D8%AE%D9%84%D9%8A%D8%A9/data=!4m2' } : { body: '<html></html>' }));
+  const c = await resolve('https://maps.app.goo.gl/Named', { fetchImpl: named, geocode: async (q) => (q === 'دوار الداخلية' ? [{ lat: 31.9686, lng: 35.9085 }] : []) });
+  assert.equal(c.approx, true);
+  assert.equal(c.place, 'دوار الداخلية');
+  assert.deepEqual([c.lat, c.lng], [31.9686, 35.9085]);
+  // لا شيء يُقرأ ← رسالة عربية واضحة
+  await assert.rejects(resolve('https://maps.app.goo.gl/None', { fetchImpl: mk(() => ({ body: '' })), geocode: async () => [] }), /مشاركة الموقع/);
+});
+
 const { invoiceHtml, priceSheetHtml } = require('../receipts');
 test('الفاتورة: تحمل اسم الشركة والمتجر والمنطقة، وتهرّب النص الخطير من اسم الزبون', () => {
   const html = invoiceHtml({

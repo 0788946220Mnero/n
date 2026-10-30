@@ -17,8 +17,8 @@ const StaffDevice = require('../models/StaffDevice');
 const StaffAlert = require('../models/StaffAlert');
 const live = require('./liveReportService');
 
-const ROLES = ['admin', 'manager', 'cashier', 'employee', 'center', 'observer'];
-const ROLE_LABELS = { admin: 'مدير النظام', manager: 'مدير', cashier: 'كاشير', employee: 'موظف', center: 'موظف سنتر', observer: 'مراقب بيانات' };
+const ROLES = ['admin', 'manager', 'cashier', 'employee', 'center', 'observer', 'company'];
+const ROLE_LABELS = { admin: 'مدير النظام', manager: 'مدير', cashier: 'كاشير', employee: 'موظف', center: 'موظف سنتر', observer: 'مراقب بيانات', company: 'شركة توصيل — البراق' };
 
 /** أنواع الحركات — الافتراضي: لمدير النظام، والطلبات الجديدة للكاشير والمدير أيضاً. */
 const CATALOG = [
@@ -34,6 +34,7 @@ const CATALOG = [
   { type: 'obligation.pay', label: 'دفع قسط التزام ثابت', hint: 'القسط ومن دفعه والمتبقي حتى الموعد', roles: ['admin'], amount: true, url: 'dashboard.html#obligations' },
   { type: 'obligation.missed', label: 'قسط التزام لم يُدفع', hint: 'صباح اليوم التالي: القسط الجديد بعد توزيع الفائت', roles: ['admin', 'manager', 'cashier'], url: 'dashboard.html#obligations' },
   { type: 'obligation.exported', label: 'التزام لم يُسدَّد حتى موعده', hint: 'صُدِّر المتبقي إلى ذمم الموردين', roles: ['admin', 'manager'], url: 'dashboard.html#receivables' },
+  { type: 'brq.trip', label: 'شركة البراق: طلب سائق جديد', hint: 'من أي متجر وإلى أي منطقة — انقر لتتبع الطلب على الخريطة', roles: ['admin', 'company'], url: 'dashboard.html#brq-map' },
   { type: 'login', label: 'تسجيل دخول للوحة', hint: 'من دخل ومن أين — معطّل افتراضياً', roles: ['admin'], off: true, url: 'dashboard.html#activity' },
 ];
 const TYPES = CATALOG.map((c) => c.type);
@@ -162,6 +163,10 @@ function compose(type, d, order) {
     case 'obligation.pay': return { title: `📆 قسط «${det.name || 'التزام'}» ${amt}`, body: `دفعه ${who} من ${det.source || 'الصندوق'}${det.voucher ? ` · سند #${det.voucher}` : ''}\nالمتبقي ${m3(det.remaining)} د.أ${det.daysLeft ? ` على ${det.daysLeft} يوم` : ''}` };
     case 'obligation.missed': return { title: `⚠️ لم يُدفع قسط «${det.name || 'التزام'}» أمس`, body: `${det.lastDay ? 'اليوم آخر يوم: ' : 'قسط اليوم صار '}${m3(det.need)} د.أ\nالمتبقي ${m3(det.remaining)} د.أ حتى ${det.due || 'الموعد'}` };
     case 'obligation.exported': return { title: `📌 «${det.name || 'التزام'}» لم يُسدَّد حتى موعده`, body: `صُدِّر المتبقي ${amt} إلى ذمم الموردين${det.receivable ? ` (#${det.receivable})` : ''} — ${det.payee || ''}` };
+    case 'brq.trip': {
+      const src = { callcenter: ' (كول سنتر)', restaurant: ` (من حالة الطلبات${det.orderNumber ? ' #' + det.orderNumber : ''})` }[det.by] || '';
+      return { title: `🛵 طلب سائق من ${det.store || 'متجر'}${src}`, body: `إلى ${det.area || '—'}${det.stops > 1 ? ` · ${det.stops} زبائن` : ''}${det.estimate ? ` · تقريباً ${det.estimate} قرش` : ''}\nانقر لتتبع الطلب` };
+    }
     case 'login': return { title: `🔑 دخول: ${who}`, body: `${ROLE_LABELS[d.role] || d.role || ''}${d.ip ? ` · ${d.ip}` : ''}` };
     default: return null;
   }

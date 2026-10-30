@@ -21,7 +21,7 @@ const relay = require('./imageRelayService');
 
 function tinyPng() {
   // صورة PNG حقيقية 64×64 (تُفك وتُصغَّر كأي صورة) — بلا ملفات خارجية
-  return require('./appleWalletService').solidPng(64, 64, '#1f1a17', '#d4a017');
+  return require('./appleWalletService').solidPng(64, 64, '#1f1a17', '#31C6A5');
 }
 
 async function timed(fn) {
