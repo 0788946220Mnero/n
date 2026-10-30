@@ -1,5 +1,5 @@
 /*
-  «الدردشة العامة» — غرفة واحدة لزبائن منصة ديار الأنباط (دخول برقم الهاتف) وفريق العمل.
+  «الدردشة العامة» — غرفة واحدة لزبائن منصة البراق (دخول برقم الهاتف) وفريق العمل.
 
   الزبون: اسم ظاهر + صورة شخصية + إطار/وسم بعدد طلباته المكتملة (services/customerProfileService).
           رقم هاتفه لا يظهر لأحد غير فريق العمل.
@@ -23,7 +23,7 @@ const { localJo, phoneVariantsJo } = require('../utils/phone');
 const MAX_LEN = 500;
 const PAGE = 50;
 const PER_MINUTE = 10;
-const STAFF_AUTHOR = 'فريق ديار الأنباط';
+const STAFF_AUTHOR = 'فريق البراق';
 const cr = () => require('../services/customerRealtime');
 const validId = (id) => mongoose.isValidObjectId(id);
 const bad = (res, message, status = 400, extra = {}) => res.status(status).json({ success: false, message, ...extra });
@@ -286,7 +286,7 @@ exports.adminList = async (req, res) => {
   });
 };
 
-// POST /api/community/admin/messages { text, replyTo? } — باسم «فريق ديار الأنباط»
+// POST /api/community/admin/messages { text, replyTo? } — باسم «فريق البراق»
 exports.adminPost = async (req, res) => {
   const text = clean(req.body && req.body.text);
   if (!text) return bad(res, 'اكتب الرسالة أولاً');

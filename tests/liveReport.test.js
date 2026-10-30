@@ -132,7 +132,7 @@ test('العنوان يحمل وقت التحديث بتوقيت عمّان', as
   reset();
   await live.sendNow();
   const t = sent[0].payload.title;
-  assert.match(t, /^📊 ديار الأنباط — \d{2}:\d{2}$/);
+  assert.match(t, /^📊 البراق — \d{2}:\d{2}$/);
   assert.equal(live.clock(new Date('2026-10-11T11:05:00Z')), '14:05');
   assert.equal(sent[0].payload.openCount, undefined); // لا تفاصيل داخلية في الإشعار
 });

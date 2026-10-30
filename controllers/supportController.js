@@ -105,7 +105,7 @@ async function pushCustomer(thread, text) {
     const tokens = [...new Set(subs.map((s) => s.token).filter(Boolean))];
     if (!tokens.length) return;
     const r = await push.sendToTokens(tokens, {
-      title: 'ردّ من فريق ديار الأنباط',
+      title: 'ردّ من فريق البراق',
       body: text.length > 120 ? text.slice(0, 117) + '…' : text,
       data: { kind: 'support', link: '/#team-chat' },
     });

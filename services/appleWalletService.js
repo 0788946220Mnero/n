@@ -191,7 +191,7 @@ const rgb = (hex) => { const [r, g, b] = hexRgb(hex); return `rgb(${r}, ${g}, ${
 
 /** pass.json لعضوية — بيانات حقيقية من القاعدة (الرصيد ورقم العضوية وQR). */
 function passJson(acc, prog, ctx = {}) {
-  const restaurant = ctx.restaurantName || 'ديار الأنباط';
+  const restaurant = ctx.restaurantName || 'البراق';
   const next = (ctx.rewards || []).filter((r) => r.pointsCost > acc.balance).sort((a, b) => a.pointsCost - b.pointsCost)[0];
   const ready = (ctx.rewards || []).filter((r) => r.pointsCost <= acc.balance).sort((a, b) => b.pointsCost - a.pointsCost)[0];
   const base = `${env('PUBLIC_API_URL').replace(/\/+$/, '')}/api/loyalty/apple`;

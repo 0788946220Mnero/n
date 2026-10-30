@@ -83,7 +83,7 @@ async function api(method, path, body) {
 /* ═════════ الصنف والبطاقة ═════════ */
 
 function classBody(prog, ctx = {}) {
-  const restaurant = ctx.restaurantName || 'ديار الأنباط';
+  const restaurant = ctx.restaurantName || 'البراق';
   const logo = ctx.logoUrl || prog.logoUrl;
   return {
     id: classId(),

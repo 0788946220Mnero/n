@@ -38,7 +38,7 @@ const customerRequestSchema = new mongoose.Schema(
 const orderSchema = new mongoose.Schema(
   {
     orderNumber: { type: String, required: true, unique: true },
-    // العلامة/المطعم الذي جاء منه الطلب (للعزل بين ديار الأنباط ورواء)
+    // العلامة/المطعم الذي جاء منه الطلب (للعزل بين البراق ورواء)
     // القيمة الافتراضية 'diyar' تحافظ على كل الطلبات القديمة كما هي دون أي تغيير
     brand: { type: String, default: 'diyar', index: true },
     // مصدر الطلب: الموقع، أو تطبيق نقطة البيع (بيع مباشر على الكاشير)
@@ -61,6 +61,18 @@ const orderSchema = new mongoose.Schema(
 
     // ═══ بيانات التوصيل (اختيارية — الطلبات القديمة تبقى صالحة) ═══
     customerLatitude: { type: Number, default: null },
+    // سائق شركة البراق المطلوب لهذا الطلب من «حالة الطلبات» (تحدّثه وحدة alburaq لحظياً)
+    brq: {
+      type: new mongoose.Schema({
+        trip: { type: mongoose.Schema.Types.ObjectId, ref: 'BrqTrip', default: null },
+        status: { type: String, default: '' },
+        label: { type: String, default: '' },
+        driverName: { type: String, default: '' },
+        receiptNo: { type: String, default: '' },
+        updatedAt: { type: Date, default: null },
+      }, { _id: false }),
+      default: undefined,
+    },
     customerLongitude: { type: Number, default: null },
     deliveryDistance: { type: Number, default: null },   // بالكيلومترات
     deliveryDistanceMode: { type: String, default: '' }, // straight | road

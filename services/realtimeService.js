@@ -33,6 +33,7 @@ const serializeOrder = (order) => ({
   deliveryFee: order.deliveryFee,
   deliveryDistance: order.deliveryDistance ?? null,
   customerLatitude: order.customerLatitude ?? null,
+  brq: order.brq || null, // حالة سائق شركة البراق
   customerLongitude: order.customerLongitude ?? null,
   locationUrl:
     order.customerLatitude != null && order.customerLongitude != null

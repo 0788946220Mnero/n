@@ -92,7 +92,7 @@ test('الملف: عدد الطلبات المكتملة يحدد الإطار،
   assert.equal(me.body.profile.displayName, '');
   assert.equal((await call('GET', '/api/community/me', { token: tok.huda })).body.profile.tier.key, 'bronze');
   assert.equal((await call('GET', '/api/community/me', { token: tok.omar })).body.profile.tier.key, 'new');
-  for (const bad of ['a', '0791234567', 'فريق ديار الأنباط', 'زوروا x.com']) {
+  for (const bad of ['a', '0791234567', 'فريق البراق', 'زوروا x.com']) {
     const r = await call('PUT', '/api/community/me', { token: tok.ali, body: { displayName: bad } });
     assert.ok([400, 422].includes(r.status), `مرفوض: ${bad}`);
   }
@@ -197,7 +197,7 @@ test('النشر باسم فريق العمل', async () => {
   assert.equal(r.status, 201);
   const list = (await call('GET', '/api/community/messages', { token: tok.ali })).body.messages;
   const m = list.find((x) => x._id === r.body.message._id);
-  assert.ok(m.author.staff && m.author.name === 'فريق ديار الأنباط');
+  assert.ok(m.author.staff && m.author.name === 'فريق البراق');
 });
 
 test('الحظر: المؤقت ينتهي وحده، والدائم مع حذف رسائله، وفك الحظر', async () => {

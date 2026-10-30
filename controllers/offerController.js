@@ -218,7 +218,7 @@ const sharePage = async (req, res) => {
   const site = siteUrl();
   const target = `${site}/?offer=${encodeURIComponent(code)}`;
   const bot = BOT_RX.test(String(req.headers['user-agent'] || ''));
-  const brand = s.restaurantName || 'مطاعم ديار الأنباط';
+  const brand = s.restaurantName || 'مطاعم البراق';
 
   let title; let desc; let image; let video = '';
   if (!o) {

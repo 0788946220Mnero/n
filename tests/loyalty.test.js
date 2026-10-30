@@ -81,7 +81,7 @@ test.before(async () => {
   const burger = await M('Product').create({ name: 'Burger', nameAr: 'برجر', price: 3.25, category: cat._id, addons: [{ name: 'جبنة', price: 0.5 }] });
   const fries = await M('Product').create({ name: 'Fries', nameAr: 'بطاطا', price: 1, category: cat._id });
   ids.burger = String(burger._id); ids.fries = String(fries._id);
-  await M('Setting').create({ restaurantName: 'ديار الأنباط' });
+  await M('Setting').create({ restaurantName: 'البراق' });
   await loyalty.program(); // الافتراضي: 10 نقاط/دينار، مكافأة «خصم دينار» = 1000 نقطة
 });
 test.after(() => server.close());

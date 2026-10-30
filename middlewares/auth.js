@@ -10,6 +10,16 @@ const centerAllowed = (req) => {
 };
 
 /**
+ * موظف شركة البراق (company): أقسام التوصيل وحدها — مساراتها تحت /api/brq بتحققها الخاص.
+ * من مسارات المطعم: حسابه (الدخول/التجديد/الخروج/ملفه) وتسجيل جهازه للإشعارات فقط — لا بيانات مطعم.
+ */
+const companyAllowed = (req) => {
+  const url = String(req.originalUrl || '').split('?')[0];
+  return url.startsWith('/api/auth/') || url === '/api/users/me' || url.startsWith('/api/brq/')
+    || /^\/api\/devices(\/|$)/.test(url) || /^\/api\/staff-alerts\/(devices|test)(\/|$)/.test(url);
+};
+
+/**
  * مراقب البيانات: قراءة فقط. أي طلب يغيّر شيئاً يُرفض هنا مهما كانت الصلاحيات أو الواجهة —
  * عدا حسابه نفسه (الخروج، تجديد الجلسة) وتسجيل جهازه للإشعارات.
  */
@@ -59,6 +69,9 @@ const protect = async (req, res, next) => {
     // موظف السنتر: بيع سنتر فقط — كل ما عداه مرفوض هنا مهما كانت الواجهة
     if (user.role === 'center' && !centerAllowed(req)) {
       return res.status(403).json({ message: 'حساب موظف السنتر مخصّص لإرسال الطلبات فقط', code: 'CENTER_ONLY' });
+    }
+    if (user.role === 'company' && !companyAllowed(req)) {
+      return res.status(403).json({ message: 'حساب شركة البراق مخصّص لأقسام التوصيل فقط', code: 'COMPANY_ONLY' });
     }
     if (user.role === 'observer' && !observerAllowed(req)) {
       return res.status(403).json({ message: 'حساب مراقب البيانات للعرض فقط — لا يمكنه التعديل', code: 'READ_ONLY' });

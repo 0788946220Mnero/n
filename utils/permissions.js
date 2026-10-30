@@ -52,6 +52,15 @@ const PERMISSIONS = [
   { key: 'support:reply', label: 'رسائل الزبائن: الرد على «تواصل مع فريق العمل» من منصة الزبائن' },
   { key: 'community:moderate', label: 'الدردشة العامة للزبائن: الإشراف — الفلترة وحذف الرسائل وحظر الزبائن والنشر باسم فريق العمل' },
   { key: 'loyalty:manage', label: 'إدارة الولاء: الأعضاء والتعديل اليدوي للنقاط، المكافآت، القواعد، وحالة بطاقات Apple/Google' },
+  // ═══ شركة البراق للتوصيل (قسم مستقل عن المطعم — يُخفى ويُظهر بهذه الصلاحيات) ═══
+  { key: 'brq:manage', label: 'شركة البراق: الخريطة الحية، السائقون، المتاجر، المناطق، والطلبات' },
+  { key: 'brq:ledger', label: 'شركة البراق: جرد السائقين والمتاجر، التحصيل وسندات القبض' },
+  { key: 'brq:settings', label: 'شركة البراق: تسعير التوصيل وإعدادات التوزيع وربط متجر المطعم' },
+  { key: 'brq:prints', label: 'شركة البراق: طباعة كشوف الأسعار، الوصولات، وتصاريح السائقين' },
+  { key: 'brq:center', label: 'شركة البراق: الكول سنتر (طلبات التوصيل باسم المتاجر)' },
+  { key: 'brq:chat', label: 'شركة البراق: الدردشة مع السائقين والمتاجر' },
+  { key: 'brq:monitor', label: 'شركة البراق: الإشراف على كل المحادثات الخاصة بين السائقين والمتاجر' },
+  { key: 'brq:request', label: 'طلب سائق البراق من «حالة الطلبات» في المطعم' },
   // عرض فقط — لمراقب البيانات (ويُمنح لغيره): يرى ولا يعدّل
   { key: 'capital:view', label: 'رأس المال: عرض الرصيد والحركات فقط (بلا إيداع ولا سحب)', view: true },
   { key: 'receivables:view', label: 'ذمم الموردين: عرض الفواتير المخزّنة وصورها فقط', view: true },
@@ -67,6 +76,8 @@ const READ_ONLY_ROLES = ['observer'];
 const PERSONAL_KEYS = PERMISSIONS.filter((p) => p.personal).map((p) => p.key);
 // المبيعات وإغلاق الجرد: لمدير النظام وحده افتراضياً (ومراقب البيانات بدوره)، ويمنحها لغيره صراحةً
 const SALES_KEYS = ['orders:closeShift', 'orders:view', 'stats:view', 'shifts:view'];
+// أقسام شركة البراق: لمدير النظام ودور «موظف شركة البراق» افتراضياً — ويمنحها مدير النظام لمن يريد
+const BRQ_KEYS = ALL_KEYS.filter((k) => k.startsWith('brq:'));
 
 const ROLE_PERMISSIONS = {
   admin: [...ALL_KEYS],
@@ -74,9 +85,10 @@ const ROLE_PERMISSIONS = {
   // رأس المال وصرف الموظفين: لمدير النظام افتراضياً، ويُمنحان لغيره من «المستخدمون»
   // والأوامر الصوتية: لمدير النظام افتراضياً، ويمنحها لمن يريد
   // المبيعات وإغلاق الجرد: لمدير النظام وحده افتراضياً، ويمنحها لمن يريد
-  manager: ALL_KEYS.filter((k) => !['users:manage', 'capital:manage', 'capital:view', 'employees:pay', 'voice:commands', 'stats:live', 'images:cloud', 'staff:notify', 'obligations:manage', 'chat:monitor', ...SALES_KEYS].includes(k)),
+  manager: ALL_KEYS.filter((k) => !['users:manage', 'capital:manage', 'capital:view', 'employees:pay', 'voice:commands', 'stats:live', 'images:cloud', 'staff:notify', 'obligations:manage', 'chat:monitor', ...SALES_KEYS, ...BRQ_KEYS.filter((b) => b !== 'brq:request')].includes(k)),
   cashier: [
     'orders:manage', // يعمل على «حالة الطلبات» ويبيع — بلا سجل مبيعات ولا إغلاق جرد
+    'brq:request', // يطلب سائق البراق لطلب توصيل من «حالة الطلبات»
     'products:view',
     'customers:view',
     'customers:manage',
@@ -96,6 +108,8 @@ const ROLE_PERMISSIONS = {
   // لا دفع ولا إلغاء ولا بيع سفري ولا قوائم الطلبات والزبائن (يفرضه الخادم أيضاً)
   center: ['center:sell', 'chat:use', 'chat:calls'],
   delivery: [], // حساب محاسبي للمندوب — بلا دخول ولا صلاحيات
+  // موظف شركة البراق: أقسام التوصيل وحدها (الخريطة، الجرد، الطباعة، الكول سنتر، الدردشة) — بلا أي قسم من المطعم
+  company: ['brq:manage', 'brq:ledger', 'brq:prints', 'brq:center', 'brq:chat'],
   // مراقب بيانات: يرى المبيعات والإحصائيات والجرد ورأس المال وفواتير الموردين وسحوبات الموظفين — بلا أي تعديل
   observer: ['stats:view', 'orders:view', 'shifts:view', 'capital:view', 'receivables:view', 'employees:view', 'expenses:view', 'obligations:view', 'chat:use', 'chat:calls'],
 };
@@ -135,6 +149,7 @@ module.exports = {
   READ_ONLY_ROLES,
   PERSONAL_KEYS,
   SALES_KEYS,
+  BRQ_KEYS,
   ROLE_PERMISSIONS,
   effectivePermissionsFor,
   usesCustomPermissions,

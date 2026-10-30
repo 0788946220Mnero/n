@@ -12,7 +12,7 @@ const loyaltyProgramSchema = new mongoose.Schema(
   {
     key: { type: String, default: 'main', unique: true },
     enabled: { type: Boolean, default: true },
-    programName: { type: String, default: 'نقاط ديار الأنباط', maxlength: 60 },
+    programName: { type: String, default: 'نقاط البراق', maxlength: 60 },
     earnPerJod: { type: Number, default: 10, min: 0, max: 1000 },          // نقاط لكل دينار
     redeemPointsPerJod: { type: Number, default: 1000, min: 1, max: 1000000 }, // كم نقطة = دينار
     minOrderToEarn: { type: Number, default: 0, min: 0 },                  // أقل قيمة طلب تكسب نقاطاً

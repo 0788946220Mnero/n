@@ -50,7 +50,7 @@ test.before(async () => {
   ids.meal = String((await M('Product').create({ nameAr: 'وجبة شاورما عربي', price: 4.5, category: shaw._id, image: '/uploads/meal.jpg', isAvailable: true, addons: [{ name: 'جبنة', price: 0.5 }] }))._id);
   ids.sandwich = String((await M('Product').create({ nameAr: 'ساندويش', price: 1.25, category: shaw._id, isAvailable: true }))._id);
   ids.kunafa = String((await M('Product').create({ nameAr: 'كنافة', price: 2, category: sweets._id, isAvailable: true }))._id);
-  await M('Setting').create({ restaurantName: 'مطاعم ديار الأنباط', logo: 'https://img.example/logo.png' });
+  await M('Setting').create({ restaurantName: 'مطاعم البراق', logo: 'https://img.example/logo.png' });
 });
 test.after(() => server && server.close());
 
@@ -108,7 +108,7 @@ test('الرابط العام للموقع: فعّال ← بياناته؛ مو
 test('صفحة المشاركة لفيسبوك: العنوان والسعر والصورة الكاملة، بلا تحويل ولا عدّ مشاهدة', async () => {
   const r = await call('GET', `/o/${ids.mealCode}`, { ua: FB });
   assert.equal(r.status, 200);
-  assert.match(r.text, /<meta property="og:title" content="وجبة الجمعة \| مطاعم ديار الأنباط">/);
+  assert.match(r.text, /<meta property="og:title" content="وجبة الجمعة \| مطاعم البراق">/);
   assert.match(r.text, /<meta property="og:description" content="بدل 4.50 د.أ ← 3.50 د.أ — اطلب مباشرة الآن">/);
   assert.match(r.text, new RegExp(`<meta property="og:image" content="http://127\\.0\\.0\\.1:\\d+/uploads/meal\\.jpg">`), 'صورة الصنف كرابط كامل');
   assert.match(r.text, new RegExp(`<meta property="og:url" content="https://diyaralanbat\\.com/o/${ids.mealCode}">`));
@@ -144,7 +144,7 @@ test('فيديو: og:video mp4 مع الغلاف صورةً للمعاينة', a
 test('رابط عرض مجهول أو منتهٍ: صفحة المطعم العامة لا خطأ', async () => {
   const r = await call('GET', '/o/nothere', { ua: FB });
   assert.equal(r.status, 200);
-  assert.match(r.text, /og:title" content="مطاعم ديار الأنباط"/);
+  assert.match(r.text, /og:title" content="مطاعم البراق"/);
   assert.match(r.text, /og:image" content="https:\/\/img.example\/logo.png"/);
   const h = await call('GET', '/o/nothere', { ua: PHONE });
   assert.ok(h.text.includes('location.replace("https://diyaralanbat.com/?offer=nothere")'), 'الزبون يصل للموقع ويرى «انتهى العرض»');

@@ -12,7 +12,7 @@ const workDaySchema = new mongoose.Schema(
 
 const settingSchema = new mongoose.Schema(
   {
-    restaurantName: { type: String, default: 'ديار الأنباط' },
+    restaurantName: { type: String, default: 'البراق' },
     logo: { type: String, default: '' },
 
     // مواعيد العمل (تُدار بالكامل من لوحة التحكم)
@@ -129,7 +129,7 @@ const settingSchema = new mongoose.Schema(
       showOrder: { type: Boolean, default: true },        // شريط الطلب الحالي ومجموعه
       includeMenuBanners: { type: Boolean, default: true }, // بانرات المينيو تُعرض أيضاً بعد الإعلانات
       imageSeconds: { type: Number, default: 8, min: 3, max: 60 }, // مدة الصورة (الفيديو حتى ينتهي)
-      welcomeText: { type: String, default: 'أهلاً بكم في ديار الأنباط', maxlength: 120 },
+      welcomeText: { type: String, default: 'أهلاً بكم في البراق', maxlength: 120 },
     },
 
     // ريلز المطعم (فيديوهات قصيرة) — تُدار بالكامل من لوحة التحكم

@@ -11,7 +11,7 @@ const settingSchema = new mongoose.Schema(
     cannedReplies: {
       type: [{ title: { type: String, maxlength: 40 }, text: { type: String, maxlength: 1000 }, _id: false }],
       default: [
-        { title: 'ترحيب', text: 'أهلاً وسهلاً بك في ديار الأنباط 🌿 كيف نقدر نساعدك؟' },
+        { title: 'ترحيب', text: 'أهلاً وسهلاً بك في البراق 🌿 كيف نقدر نساعدك؟' },
         { title: 'الطلب قيد التحضير', text: 'طلبك قيد التحضير الآن، وسيصلك بأسرع وقت إن شاء الله.' },
         { title: 'التوصيل متاح', text: 'نعم، التوصيل متاح لمنطقتك. تقدر تطلب مباشرة من زر «طلب مباشر».' },
         { title: 'شكراً', text: 'شكراً لتواصلك معنا، يسعدنا خدمتك دائماً 🙏' },
@@ -20,7 +20,7 @@ const settingSchema = new mongoose.Schema(
     autoReplyEnabled: { type: Boolean, default: true },
     autoReplyText: {
       type: String,
-      default: 'شكراً لتواصلك مع ديار الأنباط 🌙 نحن خارج ساعات العمل الآن، وسيرد عليك فريق العمل فور عودتنا.',
+      default: 'شكراً لتواصلك مع البراق 🌙 نحن خارج ساعات العمل الآن، وسيرد عليك فريق العمل فور عودتنا.',
       maxlength: 500,
     },
     retentionDays: { type: Number, default: 0, min: 0, max: 3650 }, // 0 = بلا حذف تلقائي

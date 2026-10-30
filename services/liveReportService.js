@@ -55,7 +55,7 @@ function formatReport(summary, openNames, at) {
   const exp = summary ? summary.expensesTotal : 0;
   const who = (openNames || []).filter(Boolean);
   return {
-    title: `📊 ديار الأنباط — ${at ? clock(at) : 'الآن'}`,
+    title: `📊 البراق — ${at ? clock(at) : 'الآن'}`,
     body: `المبيعات ${m3(sales)} د.أ · المصروفات ${m3(exp)} د.أ\n${who.length ? `الجرد مفتوح: ${who.join('، ')}` : 'لا يوجد جرد مفتوح'}`,
   };
 }

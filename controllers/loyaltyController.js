@@ -36,7 +36,7 @@ const isId = (v) => mongoose.Types.ObjectId.isValid(String(v || ''));
 async function brand() {
   const s = await Setting.findOne().select('restaurantName logo').lean().catch(() => null);
   const prog = await loyalty.program();
-  return { restaurantName: (s && s.restaurantName) || 'ديار الأنباط', logoUrl: prog.logoUrl || (s && s.logo) || '' };
+  return { restaurantName: (s && s.restaurantName) || 'البراق', logoUrl: prog.logoUrl || (s && s.logo) || '' };
 }
 
 const publicProgram = (p) => ({

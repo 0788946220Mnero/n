@@ -158,6 +158,9 @@ app.get('/api/health', async (req, res) => {
   });
 });
 
+// ------- شركة البراق للتوصيل: وحدة مستقلة على نفس الخادم (/api/brq + بث /brq/ws) -------
+require('./alburaq').mount(app, { realtime: require('./services/realtimeService') });
+
 // ------- معالجة الأخطاء -------
 app.use(notFound);
 app.use(errorHandler);
