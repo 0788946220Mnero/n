@@ -43,7 +43,7 @@ const orderSchema = new mongoose.Schema(
     brand: { type: String, default: 'diyar', index: true },
     // مصدر الطلب: الموقع، أو تطبيق نقطة البيع (بيع مباشر على الكاشير)
     // center = «بيع سنتر»: طلب هاتفي أدخله موظف سنتر/مطعم باسم الزبون ورقمه
-    source: { type: String, enum: ['web', 'pos', 'app', 'center'], default: 'web', index: true },
+    source: { type: String, enum: ['web', 'pos', 'app', 'center', 'hall'], default: 'web', index: true },
     centerBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null, index: true },
     centerByName: { type: String, default: '' },
     addressOption: { type: String, default: '' }, // المنطقة من خيارات العنوان (إن وُجدت)
@@ -57,7 +57,13 @@ const orderSchema = new mongoose.Schema(
     total: { type: Number, required: true },
     // cash نقدي | cliq كليك | card فيزا/بطاقة | online (قديم، يبقى للتوافق)
     paymentMethod: { type: String, enum: ['cash', 'cliq', 'card', 'online'], default: 'cash' },
-    orderType: { type: String, enum: ['delivery', 'pickup'], default: 'delivery' },
+    orderType: { type: String, enum: ['delivery', 'pickup', 'dinein'], default: 'delivery' },
+    // الصالة: الطاولة والحساب المفتوح الذي أُغلق بهذا الطلب
+    tableName: { type: String, default: '' },
+    hallTab: { type: mongoose.Schema.Types.ObjectId, ref: 'HallTab', default: null },
+    // قسائم الأقسام: أول جهاز يحجزها يطبعها (عدة كاشيرات على نفس الطابعات بلا تكرار)
+    ticketsAt: { type: Date, default: null },
+    ticketsBy: { type: String, default: '' },
 
     // ═══ بيانات التوصيل (اختيارية — الطلبات القديمة تبقى صالحة) ═══
     customerLatitude: { type: Number, default: null },

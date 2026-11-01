@@ -12,6 +12,7 @@ const {
   getPrintQueue,
   createPosOrder,
   markPrinted,
+  claimTickets,
   getBlockedPhones,
   blockPhone,
   unblockPhone,
@@ -39,6 +40,7 @@ router.post('/pos', protect, authorize('admin', 'manager', 'cashier'), createPos
 
 router.get('/print-queue', printOrAdmin, getPrintQueue);
 router.put('/:id/printed', printOrAdmin, markPrinted);
+router.post('/:id/tickets-claim', printOrAdmin, claimTickets); // قسائم الأقسام: مرة واحدة مهما كان عدد الكاشيرات
 
 // حظر الأرقام (لوحة التحكم)
 router.get('/blocked-list', protect, getBlockedPhones);

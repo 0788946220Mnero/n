@@ -69,7 +69,7 @@ const corsOptions = {
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'x-print-token'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'x-print-token', 'x-kiosk-token'],
   maxAge: 86400, // تخزين نتيجة preflight يوماً كاملاً — أسرع للموقع
 };
 
@@ -106,7 +106,10 @@ app.use('/api/receivables', require('./routes/receivableRoutes')); // الذمم
 app.use('/api/supplies', require('./routes/supplyRoutes')); // قائمة البضائع المطلوبة
 app.use('/api/capital', require('./routes/capitalRoutes')); // رأس المال
 app.use('/api/employees', require('./routes/employeeRoutes')); // الموظفون وصرفهم
-app.use('/api/center', require('./routes/centerRoutes')); // بيع سنتر: طلبات هاتفية + سجل الزبون + مراقبة الموظفين
+app.use('/api/center', require('./routes/centerRoutes'));
+app.use('/api/hall', require('./routes/hallRoutes')); // الصالة: الطاولات والطلبات من التابلت والجوال، والقبض عند الكاشير // بيع سنتر: طلبات هاتفية + سجل الزبون + مراقبة الموظفين
+app.use('/api/pos-devices', require('./routes/posDeviceRoutes')); // رمز إعدادات أجهزة الكاشير (DiyarPOS) — يعيّنه مدير النظام
+app.use('/api/attendance', require('./routes/attendanceRoutes')); // الدوام: جهاز الحضور (PIN + صورة + شبكة المطعم)، البريك من مسؤول القسم، الاستثناءات والتقارير
 app.use('/api/live-report', require('./routes/liveReportRoutes')); // التقرير الحي على شاشة القفل (Web Push)
 app.use('/api/staff-alerts', require('./routes/staffAlertRoutes')); // إشعارات الطاقم: من مدير النظام وحركات المطعم لأجهزة الموظفين
 app.use('/api/obligations', require('./routes/obligationRoutes'));
@@ -186,6 +189,7 @@ server.listen(PORT, () => {
   // التقرير الحي: تحديث دوري أثناء الدوام (كل 15 دقيقة افتراضياً)
   try { require('./services/liveReportService').start(); } catch (e) { console.error('liveReport:', e.message); }
   try { require('./services/chatService').start(); } catch (e) { console.error('chat:', e.message); } // دردشة الطاقم: مدة الاحتفاظ بالوسائط
+  try { require('./services/brandMigration').start(); } catch (e) { console.error('brand migration:', e.message); } // «ديار الأنباط» ← «البراق» في المطبوعات: مرة واحدة
   try { require('./services/permissionMigrations').start(); } catch (e) { console.error('permissions migration:', e.message); } // المبيعات وإغلاق الجرد لمدير النظام: مرة واحدة
   try { require('./controllers/supportController').startRetention(); } catch (e) { console.error('support retention:', e.message); } // رسائل الزبائن: مدة الاحتفاظ (اختيارية)
   try { require('./services/obligationService').start(); } catch (e) { console.error('obligations:', e.message); } // الالتزامات الثابتة: الإغلاق والتصدير وتنبيه الأيام الفائتة

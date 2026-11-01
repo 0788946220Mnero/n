@@ -63,6 +63,7 @@ function notifyStoreStatus(trip, cancelledByStore = false) {
   const to = (title, body, urgent = false, speak = '') => pushToStore(trip.store, { title, body, urgent, tag: 'trip-' + id, data: { kind: 'trip', tripId: id, speak } })
     .catch((e) => console.error('store push:', e.message));
   if (trip.status === 'assigned') to(`✅ قبل ${trip.driverName || 'السائق'} طلبك`, `في الطريق إليك لاستلام طلب ${trip.areaName} — افتح لترى مكانه وكم يحتاج`, true, 'قبل السائق طلبك');
+  else if (trip.status === 'picked' && trip.pickupBy === 'driver') to(`🛵 ${trip.driverName || 'السائق'} استلم الطلب`, `أكّد السائق استلام طلب ${trip.areaName} من المطعم — في الطريق للزبون`);
   else if (trip.status === 'completed') to('✅ تم تسليم الطلب', `${trip.areaName}${trip.receiptNo ? ' · ' + trip.receiptNo : ''} — قيّم السائق`);
   else if (trip.status === 'expired') to('⚠️ لا يوجد سائق متاح الآن', `طلب ${trip.areaName} لم يقبله أحد — أعد الطلب بعد قليل`, true, 'لا يوجد سائق متاح');
   else if (trip.status === 'cancelled' && !cancelledByStore) to('⛔ أُلغي طلب التوصيل', `طلب ${trip.areaName} أُلغي من إدارة البراق`, true, 'أُلغي طلب التوصيل');
@@ -350,7 +351,7 @@ async function acceptOffer(tripId, driverId) {
 
   const trip = await Trip.findOneAndUpdate(
     { _id: tripObjId, status: 'searching', offers: { $elemMatch: { driver: driver._id, status: 'sent' } } },
-    { $set: { status: 'assigned', driver: driver._id, driverName: driver.name, acceptedAt: new Date(), waveEndsAt: null, 'offers.$.status': 'accepted' } },
+    { $set: { status: 'assigned', driver: driver._id, driverName: driver.name, acceptedAt: new Date(), waveEndsAt: null, 'offers.$.status': 'accepted', pickupCode: pickupCode(), pickupTries: 0 } },
     { new: true }
   );
   if (!trip) {
@@ -391,13 +392,18 @@ async function releaseTrip(driverId, tripId) {
 }
 
 /** المتجر يؤكد أن السائق استلم الطلب: تبدأ الرحلة وتُثبَّت أسعار الفتح. */
-async function confirmPickup(tripId, storeId) {
+/** رمز الاستلام: 4 أرقام يظهر على شاشة السائق بعد القبول. */
+function pickupCode() { return String(require('crypto').randomInt(1000, 10000)); }
+const MAX_PICKUP_TRIES = 6;
+
+/** بدء الرحلة (الاستلام من المطعم): فتحة العداد والتسعير، ومن أكّد وكيف. */
+async function startTrip(filter, extra = {}) {
   const settings = await getSettings();
   const trip = await Trip.findOneAndUpdate(
-    { _id: tripId, store: storeId, status: 'assigned' },
+    { ...filter, status: 'assigned' },
     {
       $set: {
-        status: 'picked', pickedAt: new Date(),
+        status: 'picked', pickedAt: new Date(), ...extra,
         pricing: {
           meterFlagFils: settings.meterFlagFils,
           perKmFils: settings.perKmFils,
@@ -410,6 +416,43 @@ async function confirmPickup(tripId, storeId) {
   if (!trip) throw httpError(409, 'لا يمكن تأكيد الاستلام في هذه الحالة');
   publishTrip(trip);
   return trip;
+}
+
+/**
+ * المطعم يؤكد تسليم الطلب للسائق بإدخال الرمز الظاهر على شاشة السائق.
+ * { code } مطلوب للمطعم؛ الإدارة والكول سنتر يؤكدون بلا رمز ({ admin: true }).
+ */
+async function confirmPickup(tripId, storeId, { code, admin = false } = {}) {
+  if (admin) return startTrip({ _id: tripId }, { pickupBy: 'admin' });
+  const trip = await Trip.findOne({ _id: tripId, store: storeId });
+  if (!trip || trip.status !== 'assigned') throw httpError(409, 'لا يمكن تأكيد الاستلام في هذه الحالة');
+  const given = String(code == null ? '' : code).replace(/\D/g, '');
+  if (!trip.pickupCode) return startTrip({ _id: trip._id, store: storeId }, { pickupBy: 'store' }); // طلب قديم قبل نظام الرمز
+  if (!given) throw httpError(400, 'اكتب رمز الاستلام الظاهر على شاشة السائق');
+  if ((trip.pickupTries || 0) >= MAX_PICKUP_TRIES) throw httpError(429, 'محاولات خاطئة كثيرة — اطلب من السائق الضغط على «استلمت الطلب» في تطبيقه');
+  if (given !== trip.pickupCode) {
+    await Trip.updateOne({ _id: trip._id }, { $inc: { pickupTries: 1 } });
+    const left = MAX_PICKUP_TRIES - (trip.pickupTries || 0) - 1;
+    throw httpError(400, left > 0 ? `الرمز غير صحيح — تأكد من الرقم على شاشة السائق (متبقٍ ${left})` : 'الرمز غير صحيح — اطلب من السائق الضغط على «استلمت الطلب»');
+  }
+  return startTrip({ _id: trip._id, store: storeId, pickupCode: trip.pickupCode }, { pickupBy: 'code' });
+}
+
+/**
+ * السائق يؤكد بنفسه أنه استلم الطلب من المطعم — بلا تأكيد من أحد.
+ * يُحفظ موقعه لحظتها وبُعده عن المطعم للمراجعة فقط (لا يمنع).
+ */
+async function driverPickup(tripId, driverId, given = null) {
+  const trip = await Trip.findOne({ _id: tripId, driver: driverId });
+  if (!trip || trip.status !== 'assigned') throw httpError(409, 'لا يمكن تأكيد الاستلام في هذه الحالة');
+  let point = given && isValidPoint(given) ? { lat: Number(given.lat), lng: Number(given.lng) } : null;
+  if (!point) { try { point = await freshDriverPoint(driverId); } catch (_) { point = null; } }
+  const extra = { pickupBy: 'driver' };
+  if (point) {
+    extra.pickupPoint = point;
+    if (isValidPoint(trip.storeLocation)) extra.pickupOffsetM = Math.round(haversineKm(point, trip.storeLocation) * 1000);
+  }
+  return startTrip({ _id: trip._id, driver: driverId }, extra);
 }
 
 async function freshDriverPoint(driverId) {
@@ -427,14 +470,20 @@ async function freshDriverPoint(driverId) {
  *  • إن كان للزبون موقع محدد مسبقاً وسُلِّم بعيداً عنه (> deliveryRadiusM) يُعلَّم للمراجعة فقط.
  *  • بعد آخر نقطة: تكتمل الرحلة ويُحسب مجموع الكم وتدخل الأجرة جرد السائق.
  */
-async function completeStop(tripId, driverId, stopId) {
+async function completeStop(tripId, driverId, stopId, given = null) {
   const trip = await Trip.findOne({ _id: tripId, driver: driverId, status: 'picked' });
   if (!trip) throw httpError(409, 'هذه التوصيلة ليست جارية لديك');
   const stop = trip.stops.find((x) => String(x._id) === String(stopId));
   if (!stop) throw httpError(404, 'نقطة التسليم غير موجودة');
   if (stop.status === 'delivered') throw httpError(409, 'سُلِّمت هذه النقطة مسبقاً');
 
-  const point = await freshDriverPoint(driverId);
+  // موقع التسليم = GPS السائق لحظة الضغط (يرسله الجهاز مع الطلب)، وإلا آخر موقع حديث له
+  let point = null; let accuracy = null;
+  if (given && isValidPoint(given)) {
+    point = { lat: Math.round(Number(given.lat) * 1e6) / 1e6, lng: Math.round(Number(given.lng) * 1e6) / 1e6 };
+    accuracy = Number.isFinite(Number(given.accuracy)) ? Math.round(Number(given.accuracy)) : null;
+    await Driver.updateOne({ _id: driverId }, { $set: { lastLocation: { ...point, accuracy, at: new Date() } } }).catch(() => {});
+  } else point = await freshDriverPoint(driverId);
   const delivered = trip.stops.filter((x) => x.status === 'delivered' && x.deliveredTime)
     .sort((x, y) => new Date(x.deliveredTime) - new Date(y.deliveredTime));
   const prev = delivered.length ? delivered[delivered.length - 1].deliveredAt : trip.storeLocation;
@@ -444,7 +493,7 @@ async function completeStop(tripId, driverId, stopId) {
 
   const set = {
     'stops.$[s].status': 'delivered', 'stops.$[s].deliveredAt': point, 'stops.$[s].deliveredTime': new Date(),
-    'stops.$[s].legKm': legKm, 'stops.$[s].offsetM': offsetM,
+    'stops.$[s].legKm': legKm, 'stops.$[s].offsetM': offsetM, 'stops.$[s].deliveredAccuracy': accuracy,
   };
   if (!known) { set['stops.$[s].lat'] = point.lat; set['stops.$[s].lng'] = point.lng; set['stops.$[s].locationSource'] = 'delivery'; }
   // ذرّياً: نقطة معلّقة بعينها فقط (لا يُسلَّم الزبون مرتين لو ضغط السائق مرتين)
@@ -482,12 +531,12 @@ async function completeStop(tripId, driverId, stopId) {
 }
 
 /** توافق: «تم التسليم» بلا تحديد نقطة يعمل حين تبقى نقطة واحدة فقط. */
-async function completeTrip(tripId, driverId) {
+async function completeTrip(tripId, driverId, given = null) {
   const trip = await Trip.findOne({ _id: tripId, driver: driverId, status: 'picked' });
   if (!trip) throw httpError(409, 'هذه التوصيلة ليست جارية لديك');
   const pending = trip.stops.filter((x) => x.status === 'pending');
   if (pending.length !== 1) throw httpError(400, 'اختر الزبون الذي سلّمته');
-  return completeStop(tripId, driverId, pending[0]._id);
+  return completeStop(tripId, driverId, pending[0]._id, given);
 }
 
 /**
@@ -578,7 +627,7 @@ function stopSweeper() { if (sweeper) clearInterval(sweeper); sweeper = null; }
 
 module.exports = {
   pushToStore, pushToDrivers,
-  createTripForStore, buildStops, acceptOffer, declineOffer, confirmPickup, completeTrip, completeStop, setStopLocation, cancelTrip,
+  createTripForStore, buildStops, acceptOffer, declineOffer, confirmPickup, driverPickup, completeTrip, completeStop, setStopLocation, cancelTrip,
   rateDriver, sweep, startSweeper, stopSweeper, publishTrip, publishDriver, httpError, releaseTrip, onTripChanged,
   publishDriverEta, onDriverMoved,
 };

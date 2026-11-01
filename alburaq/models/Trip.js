@@ -33,6 +33,7 @@ const stopSchema = new Schema({
   status: { type: String, enum: ['pending', 'delivered'], default: 'pending' },
   deliveredAt: { lat: Number, lng: Number },
   deliveredTime: { type: Date, default: null },
+  deliveredAccuracy: { type: Number, default: null }, // دقة GPS السائق لحظة التسليم (متر)
   legKm: { type: Number, default: null },   // الكم الهوائي من النقطة السابقة (المتجر أو الزبون السابق)
   offsetM: { type: Number, default: null }, // بُعد التسليم عن الموقع المحدد مسبقاً (للمراجعة فقط، لا يمنع)
 });
@@ -96,6 +97,12 @@ const tripSchema = new Schema(
     requestedAt: { type: Date, default: Date.now },
     acceptedAt: { type: Date, default: null },
     pickedAt: { type: Date, default: null },
+    // الاستلام من المطعم: رمز يظهر على شاشة السائق ويُدخله المطعم، أو يؤكده السائق بنفسه
+    pickupCode: { type: String, default: '' },
+    pickupTries: { type: Number, default: 0 },
+    pickupBy: { type: String, enum: ['', 'code', 'driver', 'store', 'admin'], default: '' },
+    pickupPoint: { lat: Number, lng: Number },
+    pickupOffsetM: { type: Number, default: null }, // بُعد السائق عن المطعم لحظة تأكيده بنفسه (للمراجعة فقط)
     completedAt: { type: Date, default: null },
     cancelledAt: { type: Date, default: null },
     rated: { type: Boolean, default: false },

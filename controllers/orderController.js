@@ -991,6 +991,34 @@ const markPrinted = async (req, res) => {
   }
 };
 
+/**
+ * POST /api/orders/:id/tickets-claim  { station }
+ * قسائم الأقسام: أول جهاز كاشير يحجزها يطبعها — عدة كاشيرات على نفس طابعات المطبخ بلا تكرار.
+ * 200 = اطبعها أنت · 409 = طبعها جهاز آخر (ticketsBy)
+ */
+const claimTickets = async (req, res) => {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(400).json({ success: false, message: 'طلب غير صالح' });
+    const station = String((req.body && req.body.station) || handlerName(req.user)).slice(0, 60);
+    // فشلت الطباعة بعد الحجز: يُحرَّر ليعيدها هذا الجهاز أو غيره
+    if (req.body && req.body.release) {
+      await Order.updateOne({ _id: req.params.id, ticketsBy: station }, { $set: { ticketsAt: null, ticketsBy: '' } });
+      return res.json({ success: true, released: true });
+    }
+    const order = await Order.findOneAndUpdate(
+      { _id: req.params.id, $or: [{ ticketsAt: null }, { ticketsAt: { $exists: false } }] },
+      { $set: { ticketsAt: new Date(), ticketsBy: station } },
+      { new: true }
+    ).select('_id ticketsBy ticketsAt');
+    if (order) return res.json({ success: true, claimed: true, station });
+    const cur = await Order.findById(req.params.id).select('ticketsBy ticketsAt').lean();
+    if (!cur) return res.status(404).json({ success: false, message: 'الطلب غير موجود' });
+    res.status(409).json({ success: false, claimed: false, ticketsBy: cur.ticketsBy || '', message: `طُبعت قسائم هذا الطلب على ${cur.ticketsBy || 'جهاز آخر'}` });
+  } catch (err) {
+    res.status(500).json({ success: false, message: 'تعذّر حجز القسائم' });
+  }
+};
+
 // ─── حظر أرقام الزبائن ───
 const getBlockedPhones = async (req, res) => {
   try {
@@ -1527,6 +1555,6 @@ module.exports = wrapAll({
   trackOrder,
   trackBatch,
   myOrders,
-  closeShift, getOrders, getOrder, createOrder, confirmOrder, updateOrderStatus, getDashboardStats, getPrintQueue, markPrinted, createPosOrder, getBlockedPhones, blockPhone, unblockPhone });
+  closeShift, getOrders, getOrder, createOrder, confirmOrder, updateOrderStatus, getDashboardStats, getPrintQueue, markPrinted, claimTickets, createPosOrder, getBlockedPhones, blockPhone, unblockPhone });
 // حساب الجرد نفسه لتقرير المصروفات (expenseController.report) — مصدر واحد للأرقام
 module.exports.summarizeOrders = summarizeOrders;

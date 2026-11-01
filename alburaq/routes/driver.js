@@ -109,7 +109,16 @@ router.post('/trips/:id/decline', requireDriver, async (req, res, next) => {
 /** POST /api/brq/driver/trips/:id/stops/:stopId/complete — تم التسليم لهذا الزبون (بأي ترتيب) */
 router.post('/trips/:id/stops/:stopId/complete', requireDriver, async (req, res, next) => {
   try {
-    const trip = await dispatch.completeStop(req.params.id, req.driver._id, req.params.stopId);
+    // { lat, lng, accuracy } = موقع السائق الحالي لحظة التسليم (من جهازه)
+    const trip = await dispatch.completeStop(req.params.id, req.driver._id, req.params.stopId, req.body || null);
+    res.json({ success: true, trip: publicTrip(trip, 'driver') });
+  } catch (e) { next(e); }
+});
+
+/** POST /api/brq/driver/trips/:id/pickup  { lat?, lng? } — السائق يؤكد بنفسه أنه استلم الطلب من المطعم (بلا تأكيد من أحد) */
+router.post('/trips/:id/pickup', requireDriver, async (req, res, next) => {
+  try {
+    const trip = await dispatch.driverPickup(req.params.id, req.driver._id, req.body || null);
     res.json({ success: true, trip: publicTrip(trip, 'driver') });
   } catch (e) { next(e); }
 });
@@ -125,7 +134,7 @@ router.post('/trips/:id/stops/:stopId/location', requireDriver, async (req, res,
 /** توافق: تم التسليم حين تبقى نقطة واحدة */
 router.post('/trips/:id/complete', requireDriver, async (req, res, next) => {
   try {
-    const trip = await dispatch.completeTrip(req.params.id, req.driver._id);
+    const trip = await dispatch.completeTrip(req.params.id, req.driver._id, req.body || null);
     res.json({ success: true, trip: publicTrip(trip, 'driver') });
   } catch (e) { next(e); }
 });

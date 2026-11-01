@@ -61,6 +61,13 @@ const PERMISSIONS = [
   { key: 'brq:chat', label: 'شركة البراق: الدردشة مع السائقين والمتاجر' },
   { key: 'brq:monitor', label: 'شركة البراق: الإشراف على كل المحادثات الخاصة بين السائقين والمتاجر' },
   { key: 'brq:request', label: 'طلب سائق البراق من «حالة الطلبات» في المطعم' },
+  // ═══ الصالة (طلبات الطاولات من التابلت والجوال) ═══
+  { key: 'hall:use', label: 'الصالة: فتح الطاولات، إرسال الطلبات للمطبخ، وطلب الحساب' },
+  { key: 'hall:manage', label: 'الصالة: إعداد الطاولات، إلغاء صنف، نقل طاولة، وقبض الحساب وإغلاقه' },
+  // ═══ الدوام (حضور وانصراف الموظفين) ═══
+  { key: 'attendance:breaks', label: 'الدوام — مسؤول القسم: من على رأس عمله الآن، وتسجيل الاستراحات (البريك) لموظفي قسمه' },
+  { key: 'attendance:manage', label: 'الدوام — المدير: أجهزة الحضور ورموز PIN، مراجعة الاستثناءات والصور، تعديل الدوام وإغلاقه، والإعدادات' },
+  { key: 'attendance:view', label: 'الدوام: عرض تقارير الساعات والأيام والاستراحات فقط', view: true },
   // عرض فقط — لمراقب البيانات (ويُمنح لغيره): يرى ولا يعدّل
   { key: 'capital:view', label: 'رأس المال: عرض الرصيد والحركات فقط (بلا إيداع ولا سحب)', view: true },
   { key: 'receivables:view', label: 'ذمم الموردين: عرض الفواتير المخزّنة وصورها فقط', view: true },
@@ -102,16 +109,19 @@ const ROLE_PERMISSIONS = {
     'chat:use', 'chat:calls', // دردشة الطاقم
     'support:reply', // رسائل الزبائن من «تواصل مع فريق العمل»
     'community:moderate', // الإشراف على الدردشة العامة للزبائن
+    'hall:use', 'hall:manage', // الصالة: الطلبات والقبض وإغلاق الطاولة
   ],
   employee: ['products:view', 'center:sell', 'chat:use', 'chat:calls'],
   // موظف سنتر (من المنزل): يستقبل الاتصالات ويرسل الطلبات للمطعم فقط —
   // لا دفع ولا إلغاء ولا بيع سفري ولا قوائم الطلبات والزبائن (يفرضه الخادم أيضاً)
   center: ['center:sell', 'chat:use', 'chat:calls'],
+  // نادل الصالة (تابلت/جوال): الطاولات وإرسال الطلبات للمطبخ وطلب الحساب فقط — لا قبض ولا جرد ولا أي قسم آخر
+  waiter: ['hall:use', 'chat:use'],
   delivery: [], // حساب محاسبي للمندوب — بلا دخول ولا صلاحيات
   // موظف شركة البراق: أقسام التوصيل وحدها (الخريطة، الجرد، الطباعة، الكول سنتر، الدردشة) — بلا أي قسم من المطعم
   company: ['brq:manage', 'brq:ledger', 'brq:prints', 'brq:center', 'brq:chat'],
   // مراقب بيانات: يرى المبيعات والإحصائيات والجرد ورأس المال وفواتير الموردين وسحوبات الموظفين — بلا أي تعديل
-  observer: ['stats:view', 'orders:view', 'shifts:view', 'capital:view', 'receivables:view', 'employees:view', 'expenses:view', 'obligations:view', 'chat:use', 'chat:calls'],
+  observer: ['stats:view', 'orders:view', 'shifts:view', 'capital:view', 'receivables:view', 'employees:view', 'attendance:view', 'expenses:view', 'obligations:view', 'chat:use', 'chat:calls'],
 };
 
 // هل يستخدم المستخدم صلاحيات مخصّصة أم يرث صلاحيات دوره؟

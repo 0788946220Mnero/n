@@ -28,7 +28,7 @@ const totalsOf = (rows) => {
 // GET /api/employees?active=1 — الموظفون مع مجاميع صرفهم
 const listEmployees = async (req, res) => {
   const f = req.query.active === '0' ? { active: false } : req.query.active === 'all' ? {} : { active: true };
-  const emps = await Employee.find(f).sort({ name: 1 }).lean();
+  const emps = (await Employee.find(f).select('+pinHash').sort({ name: 1 }).lean()).map(({ pinHash, ...e }) => ({ ...e, hasPin: !!pinHash, pinLocked: !!(e.pinLockedUntil && e.pinLockedUntil > new Date()) }));
   const pays = await Expense.find({ employee: { $in: emps.map((e) => e._id) }, voided: { $ne: true } }).select('employee amount kind spentAt createdAt').lean();
   const byEmp = new Map();
   pays.forEach((p) => { const k = String(p.employee); if (!byEmp.has(k)) byEmp.set(k, []); byEmp.get(k).push(p); });
@@ -44,6 +44,9 @@ const pick = (b) => {
   if (b.notes !== undefined) o.notes = String(b.notes).trim().slice(0, 300);
   if (b.startDate !== undefined) o.startDate = b.startDate ? new Date(b.startDate) : null;
   if (b.active !== undefined) o.active = !!b.active;
+  if (b.section !== undefined) o.section = String(b.section).trim().slice(0, 40);
+  if (b.shiftStart !== undefined) o.shiftStart = /^([01]\d|2[0-3]):[0-5]\d$/.test(String(b.shiftStart)) ? String(b.shiftStart) : '';
+  if (b.shiftHours !== undefined) o.shiftHours = Math.min(24, Math.max(0, Number(b.shiftHours) || 0));
   return o;
 };
 

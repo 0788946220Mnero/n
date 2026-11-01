@@ -11,6 +11,18 @@ const employeeSchema = new mongoose.Schema(
     notes: { type: String, default: '', maxlength: 300 },
     active: { type: Boolean, default: true, index: true },
     createdByName: { type: String, default: '' },
+
+    // ═══ الدوام ═══
+    section: { type: String, default: '', trim: true, maxlength: 40 },  // المطبخ، الكاشير، الصالة…
+    shiftStart: { type: String, default: '' },                          // HH:mm — موعد الحضور (للتأخير)
+    shiftHours: { type: Number, default: 0, min: 0, max: 24 },           // ساعات الدوام المتوقعة (للإضافي)
+    pinHash: { type: String, default: '', select: false },
+    pinPrevHash: { type: String, default: '', select: false },
+    pinSetAt: { type: Date, default: null },
+    pinMustChange: { type: Boolean, default: false },
+    pinFails: { type: Number, default: 0 },
+    pinLockedUntil: { type: Date, default: null },
+    lastPunchAt: { type: Date, default: null },
   },
   { timestamps: true }
 );

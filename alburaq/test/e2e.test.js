@@ -256,8 +256,18 @@ test('5. الاستلام والتسليم: لا تسليم قبل الاستل�
   const w = S.winner;
   assert.equal((await call(w.token, 'POST', `/api/brq/driver/trips/${S.trip1}/complete`)).status, 409, 'لا تسليم قبل تأكيد المتجر');
 
-  const p = await call(S.store, 'POST', `/api/brq/store/trips/${S.trip1}/pickup`);
-  assert.equal(p.status, 200);
+  // رمز الاستلام: يراه السائق وحده، والمطعم يُدخله
+  const code = (await call(w.token, 'GET', '/api/brq/driver/trips')).data.trips[0].pickupCode;
+  assert.match(code, /^\d{4}$/);
+  const storeView = (await call(S.store, 'GET', '/api/brq/store/trips')).data.trips.find((t) => t.id === S.trip1);
+  assert.equal(storeView.pickupCode, undefined, 'المطعم لا يرى الرمز');
+  assert.equal((await call(S.store, 'POST', `/api/brq/store/trips/${S.trip1}/pickup`)).status, 400, 'بلا رمز');
+  const wrong = await call(S.store, 'POST', `/api/brq/store/trips/${S.trip1}/pickup`, { code: code === '1111' ? '2222' : '1111' });
+  assert.equal(wrong.status, 400);
+  assert.match(wrong.data.message, /الرمز غير صحيح/);
+  const p = await call(S.store, 'POST', `/api/brq/store/trips/${S.trip1}/pickup`, { code });
+  assert.equal(p.status, 200, p.data.message);
+  assert.equal(p.data.trip.pickupBy, 'code');
   assert.equal(p.data.trip.status, 'picked');
   assert.equal(p.data.trip.pricing.driverFils, undefined, 'المتجر لا يرى أجر السائق');
 
@@ -327,7 +337,16 @@ test('5ب. طلب بأكثر من زبون: موقع من رابط مشاركة�
   assert.equal(offer.stopsCount, 2);
   const d = S.drivers[0];
   assert.equal((await call(d.token, 'POST', `/api/brq/driver/trips/${t.id}/accept`)).status, 200);
-  assert.equal((await call(S.store, 'POST', `/api/brq/store/trips/${t.id}/pickup`)).status, 200);
+  // السائق يؤكد بنفسه أنه استلم من المطعم (بلا رمز ولا تأكيد من أحد)
+  assert.equal((await call(S.store, 'POST', `/api/brq/driver/trips/${t.id}/pickup`)).status, 401, 'المطعم ليس السائق');
+  const self = await call(d.token, 'POST', `/api/brq/driver/trips/${t.id}/pickup`);
+  assert.equal(self.status, 200, self.data.message);
+  assert.equal(self.data.trip.status, 'picked');
+  assert.equal(self.data.trip.pickupBy, 'driver');
+  assert.equal(self.data.trip.pickupCode, '', 'الرمز يختفي بعد الاستلام');
+  assert.equal((await call(d.token, 'POST', `/api/brq/driver/trips/${t.id}/pickup`)).status, 409, 'مرة واحدة');
+  const admPick = (await call(S.admin, 'GET', '/api/brq/admin/trips')).data.trips.find((x) => x.id === t.id);
+  assert.ok(admPick.pickupPoint && admPick.pickupOffsetM != null, 'موقع السائق لحظة الاستلام للمراجعة');
 
   // الزبون الثاني أرسل موقعه للسائق (رابط واتساب) → السائق يضيفه
   const B = { lat: 31.98, lng: 35.9 };

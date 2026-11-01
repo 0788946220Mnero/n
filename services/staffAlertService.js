@@ -17,8 +17,8 @@ const StaffDevice = require('../models/StaffDevice');
 const StaffAlert = require('../models/StaffAlert');
 const live = require('./liveReportService');
 
-const ROLES = ['admin', 'manager', 'cashier', 'employee', 'center', 'observer', 'company'];
-const ROLE_LABELS = { admin: 'مدير النظام', manager: 'مدير', cashier: 'كاشير', employee: 'موظف', center: 'موظف سنتر', observer: 'مراقب بيانات', company: 'شركة توصيل — البراق' };
+const ROLES = ['admin', 'manager', 'cashier', 'employee', 'center', 'observer', 'company', 'waiter'];
+const ROLE_LABELS = { admin: 'مدير النظام', manager: 'مدير', cashier: 'كاشير', employee: 'موظف', center: 'موظف سنتر', observer: 'مراقب بيانات', company: 'شركة توصيل — البراق', waiter: 'نادل الصالة' };
 
 /** أنواع الحركات — الافتراضي: لمدير النظام، والطلبات الجديدة للكاشير والمدير أيضاً. */
 const CATALOG = [

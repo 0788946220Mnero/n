@@ -58,6 +58,14 @@ function matchCond(val, cond) {
       case '$exists': return (val !== undefined) === !!c;
       case '$regex': return typeof val === 'string' && new RegExp(c, cond.$options || '').test(val);
       case '$options': return true;
+      case '$not': return !matchCond(val, c);
+      case '$type': {
+        const t = (x) => (x === null ? 'null' : x instanceof ObjectId || (x && x._bsontype === 'ObjectId') ? 'objectId' : x instanceof Date ? 'date'
+          : Array.isArray(x) ? 'array' : typeof x === 'string' ? 'string' : typeof x === 'number' ? 'number' : typeof x === 'boolean' ? 'bool' : x === undefined ? 'missing' : 'object');
+        return (Array.isArray(c) ? c : [c]).some((k) => t(val) === k);
+      }
+      case '$size': return Array.isArray(val) && val.length === c;
+      case '$elemMatch': return Array.isArray(val) && val.some((x) => (Object.keys(c).some((k) => k.startsWith('$')) ? matchCond(x, c) : x && typeof x === 'object' && matches(x, c)));
       default: throw new Error(`memoryDb: عامل غير مدعوم ${op}`);
     }
   });
@@ -85,17 +93,31 @@ function unsetPath(obj, path) {
   delete o[parts[0]];
 }
 
-function applyUpdate(doc, update, inserting) {
+/** مسار فيه $[name] مع arrayFilters: يطبّق على عناصر المصفوفة المطابقة فقط. */
+function setFiltered(doc, path, value, arrayFilters, orig) {
+  const m = /^(.*?)\.\$\[(\w+)\]\.?(.*)$/.exec(path);
+  if (!m) return false;
+  const [, arrPath, name, rest] = m;
+  const f = {};
+  (arrayFilters || []).forEach((af) => Object.entries(af).forEach(([k, v]) => { if (k === name) Object.assign(f, v); else if (k.startsWith(name + '.')) f[k.slice(name.length + 1)] = v; }));
+  const arr = getPath(doc, arrPath) || [];
+  const before = getPath(orig || doc, arrPath) || [];  // كما في MongoDB: المطابقة على الوثيقة قبل التحديث
+  arr.forEach((el, i) => { if (before[i] && matches(before[i], f)) { if (rest) setPath(el, rest, clone(value)); else arr[i] = clone(value); } });
+  return true;
+}
+
+function applyUpdate(doc, update, inserting, opts = {}) {
+  const orig = opts.arrayFilters ? clone(doc) : null;
   const ops = Object.keys(update || {});
   if (ops.length && !ops[0].startsWith('$')) { for (const [k, v] of Object.entries(update)) setPath(doc, k, clone(v)); return; }
   for (const [op, fields] of Object.entries(update)) {
     for (const [k, v] of Object.entries(fields || {})) {
-      if (op === '$set') setPath(doc, k, clone(v));
+      if (op === '$set') { if (!(k.includes('.$[') && setFiltered(doc, k, v, opts.arrayFilters, orig))) setPath(doc, k, clone(v)); }
       else if (op === '$setOnInsert') { if (inserting) setPath(doc, k, clone(v)); }
       else if (op === '$unset') unsetPath(doc, k);
       else if (op === '$inc') setPath(doc, k, (Number(getPath(doc, k)) || 0) + Number(v));
       else if (op === '$push') { const arr = getPath(doc, k) || []; arr.push(...(v && v.$each ? clone(v.$each) : [clone(v)])); setPath(doc, k, arr); }
-      else if (op === '$addToSet') { const arr = getPath(doc, k) || []; if (!arr.some((x) => eqVal(x, v))) arr.push(clone(v)); setPath(doc, k, arr); }
+      else if (op === '$addToSet') { const arr = getPath(doc, k) || []; (v && v.$each ? v.$each : [v]).forEach((x) => { if (!arr.some((y) => eqVal(y, x))) arr.push(clone(x)); }); setPath(doc, k, arr); }
       else if (op === '$pull') { const arr = getPath(doc, k) || []; setPath(doc, k, arr.filter((x) => !(typeof v === 'object' && !(v instanceof ObjectId) ? matches(x, v) : eqVal(x, v)))); }
       else throw new Error(`memoryDb: تحديث غير مدعوم ${op}`);
     }
@@ -136,7 +158,8 @@ class Q {
 function install(Model) {
   const store = new Map();
   const uniques = [];
-  for (const [fields, opts] of Model.schema.indexes()) if (opts && opts.unique) uniques.push(Object.keys(fields));
+  // الفهارس الفريدة — والجزئية منها (partialFilterExpression) تُطبَّق على الوثائق المطابقة فقط
+  for (const [fields, opts] of Model.schema.indexes()) if (opts && opts.unique) uniques.push(Object.assign(Object.keys(fields), { partial: opts.partialFilterExpression || null }));
   Model.schema.eachPath((p, t) => { if (t.options && t.options.unique && !uniques.some((u) => u.length === 1 && u[0] === p)) uniques.push([p]); });
 
   const hidden = []; Model.schema.eachPath((p, t) => { if (t.options && t.options.select === false) hidden.push(p); });
@@ -146,8 +169,10 @@ function install(Model) {
     for (const fields of uniques) {
       const key = fields.map((f) => JSON.stringify(norm(getPath(doc, f))));
       if (fields.every((f) => getPath(doc, f) == null)) continue;
+      if (fields.partial && !matches(doc, fields.partial)) continue;
       for (const [id, other] of store) {
         if (id === selfId) continue;
+        if (fields.partial && !matches(other, fields.partial)) continue;
         if (fields.every((f, i) => JSON.stringify(norm(getPath(other, f))) === key[i])) {
           throw Object.assign(new Error(`E11000 duplicate key error collection: ${Model.collection.name} index: ${fields.join('_')}`), { code: 11000 });
         }
@@ -199,9 +224,9 @@ function install(Model) {
     }
     return base;
   };
-  const updateDoc = (doc, update) => {
+  const updateDoc = (doc, update, opts) => {
     const next = clone(doc);
-    applyUpdate(next, update, false);
+    applyUpdate(next, update, false, opts || {});
     touch(next);
     const d = new Model(next);
     const casted = d.toObject({ depopulate: true });
@@ -219,7 +244,7 @@ function install(Model) {
       return opts.new || opts.returnDocument === 'after' ? out(created, o.lean, o.plus) : null;
     }
     const before = clone(doc);
-    const after = updateDoc(doc, update);
+    const after = updateDoc(doc, update, opts);
     return out(opts.new || opts.returnDocument === 'after' ? after : before, o.lean, o.plus);
   });
   Model.findByIdAndUpdate = (id, update, opts) => Model.findOneAndUpdate({ _id: id }, update, opts);

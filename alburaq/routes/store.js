@@ -124,10 +124,10 @@ router.post('/trips/:id/cancel', requireStore, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
-/** POST /api/brq/store/trips/:id/pickup — المتجر يؤكد أن السائق استلم الطلب: تبدأ الرحلة وتُحسب فتحة العداد */
+/** POST /api/brq/store/trips/:id/pickup  { code } — المتجر يُدخل رمز الاستلام الظاهر على شاشة السائق: تبدأ الرحلة وتُحسب فتحة العداد */
 router.post('/trips/:id/pickup', requireStore, async (req, res, next) => {
   try {
-    const trip = await dispatch.confirmPickup(req.params.id, req.store._id);
+    const trip = await dispatch.confirmPickup(req.params.id, req.store._id, { code: req.body && req.body.code });
     res.json({ success: true, trip: publicTrip(trip, 'store') });
   } catch (e) { next(e); }
 });

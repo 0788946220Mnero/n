@@ -14,7 +14,7 @@ const userSchema = new mongoose.Schema(
       // center: موظف سنتر من المنزل — يرسل الطلبات للمطعم فقط (مسارات محصورة في الخادم)
       // observer: مراقب بيانات — يرى ولا يعدّل (كل طلب غير GET يُرفض في middlewares/auth.js)
       // company: موظف شركة البراق للتوصيل — يدخل (مع «تذكرني») ويرى أقسام التوصيل فقط حسب صلاحيات brq:*
-      enum: ['admin', 'manager', 'cashier', 'employee', 'delivery', 'center', 'observer', 'company'],
+      enum: ['admin', 'manager', 'cashier', 'employee', 'delivery', 'center', 'observer', 'company', 'waiter'],
       default: 'employee',
     },
     permissions: [{ type: String }], // مثال: ['products:edit', 'orders:view']
