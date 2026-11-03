@@ -53,6 +53,8 @@ const expenseSchema = new mongoose.Schema(
     createdByName: { type: String, default: '' },
 
     voided: { type: Boolean, default: false },
+    // تصفية الموظف: الصرف الداخل في تصفية سابقة (EmployeeSettlement) — لا يُلغى بعدها ولا يدخل الفترة الجارية
+    settlement: { type: mongoose.Schema.Types.ObjectId, ref: 'EmployeeSettlement', default: null, index: true },
     voidedByName: { type: String, default: '' },
     voidedAt: { type: Date, default: null },
 

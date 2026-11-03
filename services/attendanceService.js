@@ -66,7 +66,14 @@ const cleanIps = (list) => [...new Set((Array.isArray(list) ? list : String(list
 
 /* ═══ الإعدادات ═══ */
 async function getConfig() {
-  return AttendanceConfig.findOneAndUpdate({ key: 'main' }, { $setOnInsert: { key: 'main' } }, { upsert: true, new: true, setDefaultsOnInsert: true }).lean();
+  const c = await AttendanceConfig.findOneAndUpdate({ key: 'main' }, { $setOnInsert: { key: 'main' } }, { upsert: true, new: true, setDefaultsOnInsert: true }).lean();
+  // rev 2: حد «الدوام المفتوح» صار 11 ساعة (كان 14) — مرة واحدة للإعدادات المحفوظة بالقيمة القديمة الافتراضية
+  if (!(c.rev >= 2)) {
+    const set = { rev: 2 }; if (c.maxShiftHours === 14) set.maxShiftHours = 11;
+    await AttendanceConfig.updateOne({ _id: c._id }, { $set: set });
+    Object.assign(c, set);
+  }
+  return c;
 }
 const publicConfig = (c) => ({
   allowedIps: c.allowedIps || [], requirePhoto: c.requirePhoto !== false, lateGraceMin: c.lateGraceMin, longBreakMin: c.longBreakMin,
@@ -96,10 +103,29 @@ async function updateConfig(body, user) {
 
 /** نطاق المستخدم: null = كل الأقسام، أو قائمة أقسام مسؤول القسم. */
 function scopeFor(user, cfg) {
-  if (!user || user.role === 'admin' || hasPermission(user, 'attendance:manage')) return null;
+  if (!user || user.role === 'admin' || user.role === 'manager' || hasPermission(user, 'attendance:manage')) return null;
   const row = (cfg.supervisors || []).find((s) => String(s.user) === String(user._id));
   return row && row.sections && row.sections.length ? row.sections : null;
 }
+
+/**
+ * ماذا يستطيع المستخدم في الدوام:
+ *   breaks: تسجيل الاستراحات — مدير النظام، أي «مدير»، من له الصلاحية، وأي مستخدم أضافه المدير «مسؤول قسم» في الإعدادات
+ *   manage: الأجهزة والرموز والاستثناءات والتعديل والعطل · view: التقارير
+ *   payments: يرى الراتب وسندات الصرف · settle: يصفّي الموظف
+ */
+function accessOf(user, cfg) {
+  if (!user) return { breaks: false, manage: false, view: false, payments: false, settle: false, scope: null };
+  const admin = user.role === 'admin';
+  const manage = admin || hasPermission(user, 'attendance:manage');
+  const listed = (cfg.supervisors || []).some((s) => String(s.user) === String(user._id));
+  const breaks = manage || user.role === 'manager' || hasPermission(user, 'attendance:breaks') || listed;
+  const payments = admin || ['employees:manage', 'employees:pay', 'employees:view'].some((k) => hasPermission(user, k));
+  const view = breaks || hasPermission(user, 'attendance:view') || payments;
+  const settle = admin || (manage && (hasPermission(user, 'employees:manage') || hasPermission(user, 'employees:pay')));
+  return { breaks, manage, view, payments, settle, scope: scopeFor(user, cfg) };
+}
+async function access(user) { return accessOf(user, await getConfig()); }
 const inScope = (scope, section) => !scope || scope.includes(section || '');
 
 /* ═══ رمز PIN ═══ */
@@ -278,11 +304,14 @@ function finalize(shift, at, emp, cfg) {
 
 const FLAG_LABELS = {
   late: 'تأخير', short: 'دوام قصير', overtime: 'إضافي', long_break: 'استراحة طويلة', forgot_out: 'لم يسجّل انصرافاً',
-  manual: 'تعديل يدوي', no_photo: 'بلا صورة', closed_by_manager: 'أغلقه المدير',
+  manual: 'تعديل يدوي', no_photo: 'بلا صورة', closed_by_manager: 'أغلقه المدير', half_day: 'نصف دوام', day_off: 'عطلة',
 };
+const DAY_LABELS = { work: 'دوام', half: 'نصف دوام', off: 'عطلة' };
+/** نصف دوام = نصف ساعات الموظف المحددة (أو 4 ساعات إن لم تُحدد). */
+const halfMinutes = (emp) => (emp && emp.shiftHours > 0 ? Math.round(emp.shiftHours * 30) : 240);
 function liveFlags(s, cfg, now = new Date()) {
   const f = new Set(s.flags || []);
-  if (s.status === 'open' && now - s.clockInAt > (cfg.maxShiftHours || 14) * 3600e3) f.add('forgot_out');
+  if (s.status === 'open' && now - s.clockInAt > (cfg.maxShiftHours || 11) * 3600e3) f.add('forgot_out');
   if (s.status === 'open' && breakTotals(s.breaks, now).open && mins(breakTotals(s.breaks, now).open.startAt, now) > (cfg.longBreakMin || 30)) f.add('long_break');
   return [...f];
 }
@@ -297,6 +326,7 @@ function publicShift(s, cfg, { photos = false } = {}) {
     onBreak: bt.open ? { id: String(bt.open._id), startAt: bt.open.startAt, byName: bt.open.byName, note: bt.open.note } : null,
     breaks: (s.breaks || []).map((b) => ({ id: String(b._id), startAt: b.startAt, endAt: b.endAt, minutes: bmin(b, now), note: b.note, manual: !!b.manual, byName: b.byName, by: b.by ? String(b.by) : '', endedByName: b.endedByName })),
     lateMinutes: s.lateMinutes || 0, flags: liveFlags(s, cfg, now), closedByName: s.closedByName || '',
+    dayType: s.dayType || 'work', settled: !!s.settlement, longOpen: s.status === 'open' && now - s.clockInAt > (cfg.maxShiftHours || 11) * 3600e3,
     reviewedAt: s.reviewedAt, reviewedByName: s.reviewedByName || '', reviewNote: s.reviewNote || '', edits: s.edits || [],
     ...(photos ? { inPhoto: s.inPhoto ? String(s.inPhoto) : '', outPhoto: s.outPhoto ? String(s.outPhoto) : '' } : {}),
   };
@@ -397,6 +427,7 @@ async function loadShiftFor(id, user, cfg, { open = true } = {}) {
   const s = await AttendanceShift.findById(id);
   if (!s) throw httpError(404, 'الدوام غير موجود');
   if (!inScope(scopeFor(user, cfg), s.section)) throw httpError(403, 'هذا الموظف ليس من قسمك');
+  if (s.settlement) throw httpError(409, 'هذا الدوام داخل تصفية سابقة — لا يُعدّل');
   if (open && s.status !== 'open') throw httpError(409, 'دوام الموظف مغلق — البريك للمداوم الآن فقط');
   return s;
 }
@@ -522,26 +553,46 @@ async function live(user) {
     scope, sections: [...new Set(emps.map((e) => e.section || ''))],
     shifts: open.map((s) => publicShift(s, cfg)),
     off: emps.filter((e) => !onIds.has(String(e._id))).map((e) => ({ id: String(e._id), name: e.name, jobTitle: e.jobTitle || '', section: e.section || '', locked: !!(e.pinLockedUntil && e.pinLockedUntil > new Date()) })),
-    longBreakMin: cfg.longBreakMin,
+    longBreakMin: cfg.longBreakMin, maxShiftHours: cfg.maxShiftHours,
   };
 }
 
 /* ═══ إدارة (المدير) ═══ */
 function needReason(b) { const r = String((b && b.reason) || '').trim().slice(0, 200); if (!r) throw httpError(400, 'اكتب سبب التعديل'); return r; }
 
+/**
+ * إغلاق دوام مفتوح (نسي الموظف الانصراف) — mode:
+ *   time  انصراف يدوي بالوقت المحدد (الافتراضي)
+ *   half  نصف دوام: ساعات العمل = نصف ساعات الموظف، والانصراف = الحضور + المدة
+ *   off   عطلة: اليوم بلا ساعات (يُعدّ في العطل لا في أيام الدوام)
+ */
 async function closeShift(id, user, body) {
   const cfg = await getConfig();
   if (!isId(id)) throw httpError(400, 'دوام غير صالح');
   const reason = needReason(body);
+  const mode = ['half', 'off'].includes(body.mode) ? body.mode : 'time';
   const s = await AttendanceShift.findById(id);
   if (!s || s.status !== 'open') throw httpError(409, 'الدوام ليس مفتوحاً');
-  const at = parseWhen(body.at) || new Date();
-  if (at < s.clockInAt || at > new Date()) throw httpError(400, 'وقت الانصراف بين الحضور والآن');
   const emp = await Employee.findById(s.employee).lean();
-  const fin = finalize(s, at, emp, cfg);
-  fin.flags = [...new Set([...fin.flags, 'closed_by_manager', 'manual'])];
+  let set; let change;
+  if (mode === 'time') {
+    const at = parseWhen(body.at) || new Date();
+    if (at < s.clockInAt || at > new Date()) throw httpError(400, 'وقت الانصراف بين الحضور والآن');
+    const fin = finalize(s, at, emp, cfg);
+    fin.flags = [...new Set([...fin.flags, 'closed_by_manager', 'manual'])];
+    set = { status: 'closed', clockOutAt: at, ...fin };
+    change = `انصراف يدوي ${at.toISOString()}`;
+  } else {
+    const worked = mode === 'half' ? halfMinutes(emp) : 0;
+    const out = new Date(Math.min(Date.now(), s.clockInAt.getTime() + worked * MIN));
+    const breaks = (s.breaks || []).map((b) => { const o = b.toObject(); if (!o.endAt) { o.endAt = out < o.startAt ? o.startAt : out; o.minutes = mins(o.startAt, o.endAt); o.endedByName = nameOf(user); } return o; });
+    const flags = new Set((s.flags || []).filter((f) => f !== 'late' || mode === 'half'));
+    ['closed_by_manager', 'manual', mode === 'half' ? 'half_day' : 'day_off'].forEach((f) => flags.add(f));
+    set = { status: 'closed', clockOutAt: out, dayType: mode, workedMinutes: worked, breakMinutes: 0, breaks, flags: [...flags], ...(mode === 'off' ? { lateMinutes: 0 } : {}) };
+    change = mode === 'half' ? `نصف دوام (${worked} د)` : 'عطلة';
+  }
   const r = await AttendanceShift.findOneAndUpdate({ _id: s._id, status: 'open' },
-    { $set: { status: 'closed', clockOutAt: at, closedByName: nameOf(user), outDevice: 'المدير', reviewedAt: null, ...fin }, $push: { edits: { at: new Date(), byName: nameOf(user), reason, change: `انصراف يدوي ${at.toISOString()}` } } }, { new: true });
+    { $set: { ...set, closedByName: nameOf(user), outDevice: 'المدير', reviewedAt: null }, $push: { edits: { at: new Date(), byName: nameOf(user), reason, change } } }, { new: true });
   if (!r) throw httpError(409, 'تغيّر الدوام — حدّث الشاشة');
   logActivity({ user, action: 'attendance.close', details: { employee: s.employeeName, reason } });
   emit({ employee: String(s.employee), kind: 'out' });
@@ -554,6 +605,7 @@ async function editShift(id, user, body) {
   const reason = needReason(body);
   const s = await AttendanceShift.findById(id);
   if (!s) throw httpError(404, 'الدوام غير موجود');
+  if (s.settlement) throw httpError(409, 'هذا الدوام داخل تصفية سابقة — لا يُعدّل');
   const inAt = body.clockInAt ? parseWhen(body.clockInAt) : s.clockInAt;
   const outAt = s.status === 'closed' ? (body.clockOutAt ? parseWhen(body.clockOutAt) : s.clockOutAt) : null;
   if (!inAt || (s.status === 'closed' && !outAt)) throw httpError(400, 'وقت غير صحيح');
@@ -636,8 +688,11 @@ function rangeOf(q) {
   return from <= to ? { from, to } : { from: to, to: from };
 }
 function summarizeRows(shifts, now = new Date()) {
-  const days = new Set(); let worked = 0; let brk = 0; let brkCount = 0; let late = 0; let lateMin = 0; let open = 0;
+  const days = new Set(); const halfDays = new Set(); const offDays = new Set();
+  let worked = 0; let brk = 0; let brkCount = 0; let late = 0; let lateMin = 0; let open = 0;
   shifts.forEach((s) => {
+    if (s.dayType === 'off') { offDays.add(s.workDay); return; }
+    if (s.dayType === 'half') halfDays.add(s.workDay);
     days.add(s.workDay);
     worked += liveWorked(s, now);
     const bt = breakTotals(s.breaks, now);
@@ -645,7 +700,7 @@ function summarizeRows(shifts, now = new Date()) {
     if (s.lateMinutes) { late += 1; lateMin += s.lateMinutes; }
     if (s.status === 'open') open += 1;
   });
-  return { days: days.size, shifts: shifts.length, workedMinutes: worked, breakMinutes: brk, breakCount: brkCount, lateCount: late, lateMinutes: lateMin, open };
+  return { days: days.size, halfDays: halfDays.size, offDays: offDays.size, shifts: shifts.length, workedMinutes: worked, breakMinutes: brk, breakCount: brkCount, lateCount: late, lateMinutes: lateMin, open };
 }
 
 async function report(query, user) {
@@ -668,7 +723,7 @@ async function employeeRecord(id, query, user) {
   const emp = await Employee.findById(id).select('+pinHash').lean();
   if (!emp) throw httpError(404, 'الموظف غير موجود');
   // مسؤول القسم (بلا صلاحيات الموظفين أو التقارير): موظفو أقسامه فقط
-  const wide = !user || ['attendance:view', 'employees:manage', 'employees:pay', 'employees:view'].some((k) => hasPermission(user, k));
+  const wide = !user || user.role === 'manager' || ['attendance:view', 'employees:manage', 'employees:pay', 'employees:view'].some((k) => hasPermission(user, k));
   if (!wide && !inScope(scopeFor(user, cfg), emp.section)) throw httpError(403, 'هذا الموظف ليس من قسمك');
   const { from, to } = rangeOf(query);
   const shifts = await AttendanceShift.find({ employee: emp._id, workDay: { $gte: from, $lte: to } }).sort({ clockInAt: -1 }).lean();
@@ -692,11 +747,330 @@ async function photo(id) {
   return { mime: p.mime || 'image/jpeg', data };
 }
 
-/** المستخدمون الذين يمكن تعيينهم مسؤولي أقسام (من لهم صلاحية البريك). */
+/** من يمكن إضافته «مسؤول قسم» يسجّل الاستراحات: أي مستخدم للمطعم (الإضافة نفسها تمنحه التسجيل). */
 async function supervisorCandidates() {
   const User = require('../models/User');
-  const users = await User.find({ isActive: { $ne: false }, role: { $nin: ['delivery', 'center', 'company'] } }).select('name username role permissions').lean();
-  return users.filter((u) => u.role !== 'admin' && hasPermission(u, 'attendance:breaks')).map((u) => ({ id: String(u._id), name: nameOf(u), role: u.role }));
+  const users = await User.find({ isActive: { $ne: false }, role: { $nin: ['delivery', 'center', 'company', 'admin'] } }).select('name username role').sort({ name: 1 }).lean();
+  return users.map((u) => ({ id: String(u._id), name: nameOf(u), role: u.role }));
+}
+
+
+/* ═══ العطل ونصف الدوام لتاريخ محدد (المدير) ═══ */
+/** يسجّل يوم «عطلة» أو «نصف دوام» لموظف في تاريخ لا دوام فيه. */
+async function markDay(user, body) {
+  const b = body || {};
+  const reason = needReason(b);
+  const kind = b.kind === 'half' ? 'half' : 'off';
+  if (!isId(b.employeeId)) throw httpError(400, 'اختر الموظف');
+  const day = validDay(b.day) ? b.day : ammanDay();
+  if (day > ammanDay()) throw httpError(400, 'لا يُسجَّل يوم في المستقبل');
+  const emp = await Employee.findById(b.employeeId).lean();
+  if (!emp) throw httpError(404, 'الموظف غير موجود');
+  if (await AttendanceShift.exists({ employee: emp._id, workDay: day })) throw httpError(409, 'للموظف دوام مسجّل في هذا اليوم — عدّله من سجله بدل إضافة يوم جديد');
+  const st = toMin(emp.shiftStart);
+  const inAt = new Date(dayStart(day).getTime() + (st === null ? 12 * 60 : st) * MIN);
+  const worked = kind === 'half' ? halfMinutes(emp) : 0;
+  const s = await AttendanceShift.create({
+    employee: emp._id, employeeName: emp.name, section: emp.section || '', workDay: day, status: 'closed', dayType: kind,
+    clockInAt: inAt, clockOutAt: new Date(inAt.getTime() + worked * MIN), inDevice: 'المدير', outDevice: 'المدير', closedByName: nameOf(user),
+    workedMinutes: worked, flags: ['manual', kind === 'half' ? 'half_day' : 'day_off'], reviewedAt: new Date(), reviewedByName: nameOf(user),
+    edits: [{ at: new Date(), byName: nameOf(user), reason, change: DAY_LABELS[kind] }],
+  });
+  logActivity({ user, action: `attendance.${kind === 'half' ? 'half' : 'off'}`, details: { employee: emp.name, day, reason } });
+  emit({ employee: String(emp._id), kind: 'edit' });
+  return publicShift(s.toObject(), await getConfig());
+}
+
+/** حذف يوم عطلة/نصف دوام سُجّل بالخطأ (قبل التصفية). */
+async function deleteDay(id, user) {
+  if (!isId(id)) throw httpError(400, 'يوم غير صالح');
+  const s = await AttendanceShift.findById(id).lean();
+  if (!s) throw httpError(404, 'غير موجود');
+  if (s.settlement) throw httpError(409, 'داخل تصفية سابقة — لا يُحذف');
+  if (!(s.dayType === 'off' || s.dayType === 'half') || s.inDevice !== 'المدير') throw httpError(400, 'يُحذف فقط يوم عطلة أو نصف دوام سجّله المدير');
+  await AttendanceShift.deleteOne({ _id: s._id, settlement: null });
+  logActivity({ user, action: 'attendance.day_delete', details: { employee: s.employeeName, day: s.workDay, dayType: s.dayType } });
+  emit({ employee: String(s.employee), kind: 'edit' });
+}
+
+/* ═══ التنبيهات: دوام مفتوح أكثر من الحد · استراحة مفتوحة طويلة ═══ */
+const tFmt = new Intl.DateTimeFormat('ar-JO-u-nu-latn', { timeZone: 'Asia/Amman', hour: 'numeric', minute: '2-digit' });
+function notify(type, payload, details) {
+  emit({ kind: 'alert', alert: type, ...payload });
+  try { realtime = realtime || require('./realtimeService'); realtime.broadcast('attendance.alert', { alert: type, ...payload }); } catch (_) { /* */ }
+  try { require('./staffAlertService').emit(type, { userName: 'الدوام', details }); } catch (_) { /* */ }
+}
+/** فحص واحد (كل دقيقة من start) — كل تنبيه يُرسل مرة واحدة لكل دوام/استراحة. */
+async function checkAlerts(now = new Date()) {
+  const cfg = await getConfig();
+  const sent = [];
+  const longBefore = new Date(now - (cfg.maxShiftHours || 11) * 3600e3);
+  const longOpen = await AttendanceShift.find({ status: 'open', clockInAt: { $lt: longBefore }, alertLongAt: null }).lean();
+  for (const sh of longOpen) {
+    const r = await AttendanceShift.updateOne({ _id: sh._id, status: 'open', alertLongAt: null }, { $set: { alertLongAt: now } });
+    if (!r.modifiedCount) continue;
+    const hours = Math.floor((now - sh.clockInAt) / 3600e3);
+    notify('attendance.long', { shiftId: String(sh._id), employee: String(sh.employee), employeeName: sh.employeeName, hours },
+      { employee: sh.employeeName, hours, since: tFmt.format(sh.clockInAt), section: sh.section });
+    sent.push({ type: 'long', employee: sh.employeeName });
+  }
+  const brkBefore = new Date(now - (cfg.longBreakMin || 30) * MIN);
+  const onBreak = await AttendanceShift.find({ status: 'open', breaks: { $elemMatch: { endAt: null, startAt: { $lt: brkBefore }, alertedAt: null } } }).lean();
+  for (const sh of onBreak) {
+    const b = (sh.breaks || []).find((x) => !x.endAt && x.startAt < brkBefore && !x.alertedAt);
+    if (!b) continue;
+    const r = await AttendanceShift.updateOne({ _id: sh._id, status: 'open' }, { $set: { 'breaks.$[b].alertedAt': now } }, { arrayFilters: [{ 'b._id': b._id, 'b.alertedAt': null, 'b.endAt': null }] });
+    if (!r.modifiedCount) continue;
+    const minutes = mins(b.startAt, now);
+    notify('attendance.break', { shiftId: String(sh._id), employee: String(sh.employee), employeeName: sh.employeeName, minutes },
+      { employee: sh.employeeName, minutes, since: tFmt.format(b.startAt), by: b.byName });
+    sent.push({ type: 'break', employee: sh.employeeName });
+  }
+  return sent;
+}
+let watchTimer = null;
+function start() {
+  if (watchTimer) return;
+  const tick = () => checkAlerts().catch((e) => console.error('attendance alerts:', e.message));
+  watchTimer = setInterval(tick, 60 * 1000);
+  if (watchTimer.unref) watchTimer.unref();
+  setTimeout(tick, 15000).unref?.();
+}
+
+/* ═══ الفترة الجارية (منذ آخر تصفية) والتصفية والأرشيف ═══ */
+const r3 = (n) => Math.round(Number(n || 0) * 1000) / 1000;
+const KINDS = { salary: 'راتب', advance: 'سلفة', bonus: 'مكافأة', other: 'أخرى', general: 'صرف' };
+function paidTotals(rows) {
+  const t = { salary: 0, advance: 0, bonus: 0, other: 0, all: 0, count: rows.length };
+  rows.forEach((e) => { const k = ['salary', 'advance', 'bonus'].includes(e.kind) ? e.kind : 'other'; t[k] += e.amount || 0; t.all += e.amount || 0; });
+  Object.keys(t).forEach((k) => { if (k !== 'count') t[k] = r3(t[k]); });
+  return t;
+}
+const shiftRow = (x) => ({
+  id: String(x._id), workDay: x.workDay, dayType: x.dayType || 'work', status: x.status, clockInAt: x.clockInAt, clockOutAt: x.clockOutAt,
+  workedMinutes: liveWorked(x), breakMinutes: x.status === 'closed' ? x.breakMinutes || 0 : breakTotals(x.breaks).minutes,
+  breaks: (x.breaks || []).map((b) => ({ startAt: b.startAt, endAt: b.endAt, minutes: bmin(b), note: b.note || '', byName: b.byName || '' })),
+  lateMinutes: x.lateMinutes || 0, flags: x.flags || [],
+});
+const payRow = (e) => ({ id: String(e._id), number: e.number, kind: e.kind, kindLabel: KINDS[e.kind] || 'صرف', name: e.name || '', amount: r3(e.amount), at: e.spentAt || e.createdAt, source: e.source || '', byName: e.createdByName || e.approvedByName || '' });
+
+async function currentPeriod(emp) {
+  const Expense = require('../models/Expense');
+  const [shifts, pays] = await Promise.all([
+    AttendanceShift.find({ employee: emp._id, settlement: null }).sort({ clockInAt: -1 }).lean(),
+    Expense.find({ employee: emp._id, voided: { $ne: true }, settlement: null }).select('-approvedSignature').sort({ spentAt: -1, createdAt: -1 }).lean(),
+  ]);
+  const paid = paidTotals(pays);
+  return {
+    since: emp.lastSettledAt || null, summary: summarizeRows(shifts), shifts, payments: pays, paid,
+    salary: r3(emp.salary), remaining: r3((emp.salary || 0) - paid.salary - paid.advance),
+  };
+}
+
+async function loadEmployeeFor(id, user) {
+  if (!isId(id)) throw httpError(400, 'موظف غير صالح');
+  const cfg = await getConfig();
+  const acc = accessOf(user, cfg);
+  if (!acc.view) throw httpError(403, 'ليس لديك صلاحية');
+  const emp = await Employee.findById(id).select('+pinHash').lean();
+  if (!emp) throw httpError(404, 'الموظف غير موجود');
+  if (!acc.payments && !acc.manage && !inScope(acc.scope, emp.section)) throw httpError(403, 'هذا الموظف ليس من قسمك');
+  return { emp, cfg, acc };
+}
+
+/** ملف الموظف الكامل: الدوامات والاستراحات والعطل والراتب والمصاريف منذ آخر تصفية + أرشيف التصفيات. */
+async function employeeFull(id, user) {
+  const { emp, cfg, acc } = await loadEmployeeFor(id, user);
+  const cur = await currentPeriod(emp);
+  const EmployeeSettlement = require('../models/EmployeeSettlement');
+  const settlements = await EmployeeSettlement.find({ employee: emp._id }).select('number from to summary paid salary remaining byName createdAt note').sort({ createdAt: -1 }).limit(60).lean();
+  return {
+    access: { payments: acc.payments, settle: acc.settle, manage: acc.manage },
+    employee: {
+      id: String(emp._id), name: emp.name, jobTitle: emp.jobTitle || '', phone: emp.phone || '', section: emp.section || '', active: emp.active !== false,
+      startDate: emp.startDate, shiftStart: emp.shiftStart || '', shiftHours: emp.shiftHours || 0, salary: acc.payments ? r3(emp.salary) : null,
+      hasPin: !!emp.pinHash, locked: !!(emp.pinLockedUntil && emp.pinLockedUntil > new Date()), lastSettledAt: emp.lastSettledAt || null,
+    },
+    period: {
+      since: cur.since, summary: cur.summary,
+      shifts: cur.shifts.map((x) => publicShift(x, cfg)),
+      ...(acc.payments ? { payments: cur.payments.map(payRow), paid: cur.paid, salary: cur.salary, remaining: cur.remaining } : {}),
+    },
+    settlements: settlements.map((x) => ({ id: String(x._id), number: x.number, from: x.from, to: x.to, summary: x.summary, createdAt: x.createdAt, byName: x.byName, note: x.note,
+      ...(acc.payments ? { paid: x.paid, salary: x.salary, remaining: x.remaining } : {}) })),
+    labels: FLAG_LABELS, dayLabels: DAY_LABELS,
+  };
+}
+
+/** قائمة الموظفين بأرقام الفترة الجارية (لصفحة «الموظفون»). */
+async function employeesOverview(user, { all = false } = {}) {
+  const cfg = await getConfig();
+  const acc = accessOf(user, cfg);
+  if (!acc.view) throw httpError(403, 'ليس لديك صلاحية');
+  const scope = acc.payments || acc.manage ? null : acc.scope;
+  const emps = await Employee.find({ ...(all ? {} : { active: true }), ...(scope ? { section: { $in: scope } } : {}) }).sort({ section: 1, name: 1 }).lean();
+  const ids = emps.map((e) => e._id);
+  const Expense = require('../models/Expense');
+  const [shifts, pays] = await Promise.all([
+    AttendanceShift.find({ employee: { $in: ids }, settlement: null }).lean(),
+    acc.payments ? Expense.find({ employee: { $in: ids }, voided: { $ne: true }, settlement: null }).select('employee amount kind').lean() : [],
+  ]);
+  const group = (rows) => { const m = new Map(); rows.forEach((r) => { const k = String(r.employee); if (!m.has(k)) m.set(k, []); m.get(k).push(r); }); return m; };
+  const sh = group(shifts); const py = group(pays);
+  return {
+    access: { payments: acc.payments, settle: acc.settle, manage: acc.manage },
+    rows: emps.map((e) => {
+      const list = sh.get(String(e._id)) || [];
+      const paid = acc.payments ? paidTotals(py.get(String(e._id)) || []) : null;
+      return {
+        id: String(e._id), name: e.name, jobTitle: e.jobTitle || '', section: e.section || '', active: e.active !== false, lastSettledAt: e.lastSettledAt || null,
+        onDuty: list.some((x) => x.status === 'open'), summary: summarizeRows(list),
+        ...(paid ? { salary: r3(e.salary), paid, remaining: r3((e.salary || 0) - paid.salary - paid.advance) } : {}),
+      };
+    }),
+  };
+}
+
+/**
+ * تصفية الموظف: كل دوام مغلق وكل سند صرف غير مُصفّى حتى الآن يدخل التصفية،
+ * فتعود الفترة الجارية إلى الصفر، وتُحفظ صورة كاملة في الأرشيف. الدوام المفتوح الآن يبقى للفترة القادمة.
+ */
+async function settle(id, user, body) {
+  const { emp, acc } = await loadEmployeeFor(id, user);
+  if (!acc.settle) throw httpError(403, 'التصفية لمدير النظام أو لمن يملك إدارة الدوام وإدارة/صرف الموظفين');
+  const note = String((body && body.note) || '').trim().slice(0, 300);
+  const now = new Date();
+  // قفل قصير: لا تصفيتان للموظف نفسه في اللحظة نفسها
+  const lock = await Employee.findOneAndUpdate({ _id: emp._id, $or: [{ settlingAt: null }, { settlingAt: { $lt: new Date(now - 2 * MIN) } }] }, { $set: { settlingAt: now } });
+  if (!lock) throw httpError(409, 'تصفية هذا الموظف قيد التنفيذ من جهاز آخر');
+  const EmployeeSettlement = require('../models/EmployeeSettlement');
+  const Expense = require('../models/Expense');
+  const Counter = require('../models/Counter');
+  const sid = new mongoose.Types.ObjectId();
+  try {
+    const [shRes, exRes] = await Promise.all([
+      AttendanceShift.updateMany({ employee: emp._id, status: 'closed', settlement: null }, { $set: { settlement: sid } }),
+      Expense.updateMany({ employee: emp._id, voided: { $ne: true }, settlement: null }, { $set: { settlement: sid } }),
+    ]);
+    if (!shRes.modifiedCount && !exRes.modifiedCount) throw httpError(400, 'لا شيء للتصفية — لا دوامات مغلقة ولا صرف منذ آخر تصفية');
+    const [shifts, pays] = await Promise.all([
+      AttendanceShift.find({ settlement: sid }).sort({ clockInAt: 1 }).lean(),
+      Expense.find({ settlement: sid }).select('-approvedSignature').sort({ spentAt: 1, createdAt: 1 }).lean(),
+    ]);
+    const paid = paidTotals(pays);
+    const firstAt = [...shifts.map((x) => x.clockInAt), ...pays.map((p) => p.spentAt || p.createdAt)].filter(Boolean).sort((a, b) => a - b)[0] || emp.lastSettledAt || now;
+    const c = await Counter.findOneAndUpdate({ _id: 'employeeSettlement' }, { $inc: { seq: 1 } }, { new: true, upsert: true });
+    const doc = await EmployeeSettlement.create({
+      _id: sid, number: c.seq, employee: emp._id, employeeName: emp.name, jobTitle: emp.jobTitle || '', section: emp.section || '',
+      from: emp.lastSettledAt && emp.lastSettledAt < firstAt ? emp.lastSettledAt : firstAt, to: now, salary: r3(emp.salary),
+      summary: summarizeRows(shifts), shifts: shifts.map(shiftRow), payments: pays.map(payRow), paid,
+      remaining: r3((emp.salary || 0) - paid.salary - paid.advance), note, byName: nameOf(user), by: user._id,
+    });
+    await Employee.updateOne({ _id: emp._id }, { $set: { lastSettledAt: now, settlingAt: null } });
+    logActivity({ user, action: 'attendance.settle', amount: paid.all, details: { employee: emp.name, number: doc.number, shifts: shifts.length, payments: pays.length } });
+    emit({ employee: String(emp._id), kind: 'settle' });
+    return doc.toObject();
+  } catch (e) {
+    // لا تصفية ناقصة: نعيد ما عُلّم
+    await Promise.all([
+      AttendanceShift.updateMany({ settlement: sid }, { $set: { settlement: null } }),
+      Expense.updateMany({ settlement: sid }, { $set: { settlement: null } }),
+      Employee.updateOne({ _id: emp._id }, { $set: { settlingAt: null } }),
+    ]).catch(() => {});
+    throw e;
+  }
+}
+
+async function getSettlement(id, user) {
+  if (!isId(id)) throw httpError(400, 'تصفية غير صالحة');
+  const EmployeeSettlement = require('../models/EmployeeSettlement');
+  const x = await EmployeeSettlement.findById(id).lean();
+  if (!x) throw httpError(404, 'التصفية غير موجودة');
+  const { acc } = await loadEmployeeFor(x.employee, user);
+  if (!acc.payments) { delete x.payments; delete x.paid; delete x.salary; delete x.remaining; }
+  return { ...x, id: String(x._id), dayLabels: DAY_LABELS };
+}
+
+/* ═══ الطباعة: الخادم يبني الورقة الحرارية ← مهمة html ← محطة الطباعة (الطابعة الرئيسية) ═══ */
+const receipts = require('../alburaq/receipts');
+const PrintJob = require('../models/PrintJob');
+const PRINT_TTL_MS = 10 * 60 * 1000;
+const hm = (m) => `${Math.floor((m || 0) / 60)}:${String(Math.round(m || 0) % 60).padStart(2, '0')}`;
+const m3 = (n) => Number(n || 0).toFixed(3);
+const dShort = new Intl.DateTimeFormat('ar-JO-u-nu-latn', { timeZone: 'Asia/Amman', day: 'numeric', month: 'numeric' });
+const dFull = new Intl.DateTimeFormat('ar-JO-u-nu-latn', { timeZone: 'Asia/Amman', year: 'numeric', month: 'numeric', day: 'numeric' });
+const hEsc = (t) => String(t == null ? '' : t).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+async function brandName() {
+  try { const st = await require('../models/Setting').findOne().select('restaurantName').lean(); return (st && st.restaurantName) || 'البراق'; } catch (_) { return 'البراق'; }
+}
+function sheetHtml({ brand, title, emp, from, to, summary, shifts, payments, paid, salary, remaining, number, byName, note }) {
+  const row = (a, b) => `<div class="row"><span>${a}</span><span>${b}</span></div>`;
+  const shiftLines = (shifts || []).slice().sort((a, b) => new Date(a.clockInAt) - new Date(b.clockInAt)).map((x) => {
+    const dt = x.dayType || 'work';
+    const what = dt === 'off' ? 'عطلة' : dt === 'half' ? `نصف · ${hm(x.workedMinutes)}` : `${tFmt.format(new Date(x.clockInAt))}–${x.status === 'open' ? '…' : tFmt.format(new Date(x.clockOutAt))}`;
+    return `<tr><td>${dShort.format(new Date(`${x.workDay}T12:00:00+03:00`))}</td><td>${hEsc(what)}</td><td class="num">${dt === 'off' ? '—' : hm(x.workedMinutes)}</td><td class="num">${x.breakMinutes || 0}</td></tr>`;
+  }).join('');
+  const payLines = (payments || []).map((p) => `<tr><td>${dShort.format(new Date(p.at))}</td><td>#${p.number} ${hEsc(p.kindLabel || KINDS[p.kind] || '')}</td><td class="num">${m3(p.amount)}</td></tr>`).join('');
+  const body = `
+    <h1>${hEsc(brand)}</h1>
+    <div class="sub">${hEsc(title)}${number ? ` #${number}` : ''}</div>
+    ${row('الموظف', `<b>${hEsc(emp.name)}</b>`)}
+    ${emp.jobTitle || emp.section ? row('الوظيفة', hEsc([emp.jobTitle, emp.section].filter(Boolean).join(' · '))) : ''}
+    ${row('الفترة', `${from ? dFull.format(new Date(from)) : 'البداية'} ← ${dFull.format(new Date(to || Date.now()))}`)}
+    <hr>
+    ${row('أيام الدوام', `<b>${summary.days || 0}</b>`)}
+    ${summary.halfDays ? row('منها نصف دوام', summary.halfDays) : ''}
+    ${row('العطل', summary.offDays || 0)}
+    ${row('ساعات العمل', `<b>${hm(summary.workedMinutes)}</b>`)}
+    ${row('الاستراحات', `${summary.breakCount || 0} · ${summary.breakMinutes || 0} د`)}
+    ${row('التأخير', `${summary.lateCount || 0}${summary.lateMinutes ? ` · ${summary.lateMinutes} د` : ''}`)}
+    ${shiftLines ? `<hr><table><thead><tr><th>اليوم</th><th>الدوام</th><th class="num">عمل</th><th class="num">استراحة</th></tr></thead><tbody>${shiftLines}</tbody></table>` : ''}
+    ${paid ? `<hr>
+    ${row('الراتب الشهري', m3(salary))}
+    ${row('رواتب مصروفة', m3(paid.salary))}
+    ${row('سلف', m3(paid.advance))}
+    ${paid.bonus ? row('مكافآت', m3(paid.bonus)) : ''}
+    ${paid.other ? row('أخرى', m3(paid.other)) : ''}
+    ${payLines ? `<table><tbody>${payLines}</tbody></table>` : ''}
+    <div class="row total"><span>المتبقي من الراتب</span><span>${m3(remaining)}</span></div>` : ''}
+    ${note ? `<div class="foot">${hEsc(note)}</div>` : ''}
+    <div class="foot">${number ? `صُفّي بواسطة ${hEsc(byName || '')} — ` : ''}طُبع ${hEsc(dFull.format(new Date()))} ${hEsc(tFmt.format(new Date()))}<br><br>توقيع الموظف ............ &nbsp; المدير ............</div>`;
+  return receipts.page(title, receipts.logoDataUri(), body);
+}
+async function queueHtml(title, html, user) {
+  const job = await PrintJob.create({ type: 'html', payload: { title: String(title).slice(0, 80), html }, requestedBy: user._id, requestedByName: nameOf(user), expiresAt: new Date(Date.now() + PRINT_TTL_MS) });
+  try { realtime = realtime || require('./realtimeService'); realtime.emitPrintJob(job); } catch (_) { /* */ }
+  logActivity({ user, action: 'attendance.print', details: { title } });
+  return { jobId: String(job._id) };
+}
+
+/** كشف الفترة الجارية للموظف — أو تصفية سابقة (settlementId). */
+async function printEmployee(id, user) {
+  const { emp, acc } = await loadEmployeeFor(id, user);
+  const cur = await currentPeriod(emp);
+  const html = sheetHtml({ brand: await brandName(), title: 'كشف دوام وحساب موظف', emp, from: cur.since || (cur.shifts.length ? cur.shifts[cur.shifts.length - 1].clockInAt : null), to: new Date(),
+    summary: cur.summary, shifts: cur.shifts.map(shiftRow),
+    ...(acc.payments ? { payments: cur.payments.map(payRow), paid: cur.paid, salary: cur.salary, remaining: cur.remaining } : {}) });
+  return queueHtml(`كشف ${emp.name}`, html, user);
+}
+async function printSettlement(id, user) {
+  const x = await getSettlement(id, user);
+  const html = sheetHtml({ brand: await brandName(), title: 'تصفية موظف', emp: { name: x.employeeName, jobTitle: x.jobTitle, section: x.section }, from: x.from, to: x.to,
+    summary: x.summary || {}, shifts: x.shifts || [], payments: x.payments, paid: x.paid, salary: x.salary, remaining: x.remaining, number: x.number, byName: x.byName, note: x.note });
+  return queueHtml(`تصفية #${x.number} ${x.employeeName}`, html, user);
+}
+/** تقرير الدوام لكل الموظفين في فترة. */
+async function printReport(query, user) {
+  const r = await report(query, user);
+  const rows = r.rows.map((x) => `<tr><td>${hEsc(x.name)}</td><td class="num">${x.days}${x.offDays ? `/${x.offDays}ع` : ''}</td><td class="num">${hm(x.workedMinutes)}</td><td class="num">${x.breakCount}·${x.breakMinutes}</td></tr>`).join('');
+  const body = `<h1>${hEsc(await brandName())}</h1><div class="sub">تقرير الدوام</div>
+    <div class="row"><span>الفترة</span><span>${r.from} ← ${r.to}</span></div><hr>
+    <table><thead><tr><th>الموظف</th><th class="num">أيام</th><th class="num">ساعات</th><th class="num">استراحة</th></tr></thead><tbody>${rows}</tbody></table>
+    <div class="row total"><span>مجموع الساعات</span><span>${hm(r.totals.workedMinutes)}</span></div>
+    <div class="row"><span>الاستراحات</span><span>${r.totals.breakCount} · ${r.totals.breakMinutes} د</span></div>
+    <div class="foot">ع = عطلة · طُبع ${hEsc(dFull.format(new Date()))} ${hEsc(tFmt.format(new Date()))}</div>`;
+  return queueHtml(`تقرير الدوام ${r.from}`, receipts.page('تقرير الدوام', receipts.logoDataUri(), body), user);
 }
 
 module.exports = {
@@ -714,4 +1088,7 @@ module.exports = {
   closeShift, editShift, createManual, reviewShift, exceptions,
   // تقارير
   report, employeeRecord, photo, supervisorCandidates,
+  // الصلاحيات، العطل، التنبيهات، التصفية، الطباعة، صفحة الموظف
+  access, accessOf, markDay, deleteDay, checkAlerts, start, employeeFull, employeesOverview, settle, getSettlement,
+  printEmployee, printSettlement, printReport, sheetHtml,
 };

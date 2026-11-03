@@ -15,7 +15,7 @@ const Product = require('../models/Product');
 const Order = require('../models/Order');
 const PrintJob = require('../models/PrintJob');
 const realtime = require('./realtimeService');
-const { generateUniqueOrderNumber } = require('../utils/orderNumber');
+const { createOrderWithNumber } = require('../utils/orderNumber');
 
 const JOB_TTL_MS = 10 * 60 * 1000; // طلبات المطبخ: مهلة أطول من الطباعة العادية
 const nameOf = (u) => (u && (u.name || u.username)) || '';
@@ -280,8 +280,7 @@ async function payTab(tabId, body, user) {
   const discount = Math.min(itemsTotal, Math.max(0, money(body.discount)));
   let order;
   try {
-    order = await Order.create({
-      orderNumber: await generateUniqueOrderNumber(),
+    order = await createOrderWithNumber(Order, 'hall', {
       customerName: `طاولة ${tab.tableName}`, phone: '', address: '',
       items: items.map((i) => ({ product: i.product, nameAr: i.nameAr, price: i.price, quantity: i.quantity, addons: i.addons, notes: i.notes, printerName: i.printerName })),
       itemsTotal, discount, deliveryFee: 0, total: money(itemsTotal - discount),

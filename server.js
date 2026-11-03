@@ -190,6 +190,8 @@ server.listen(PORT, () => {
   try { require('./services/liveReportService').start(); } catch (e) { console.error('liveReport:', e.message); }
   try { require('./services/chatService').start(); } catch (e) { console.error('chat:', e.message); } // دردشة الطاقم: مدة الاحتفاظ بالوسائط
   try { require('./services/brandMigration').start(); } catch (e) { console.error('brand migration:', e.message); } // «ديار الأنباط» ← «البراق» في المطبوعات: مرة واحدة
+  try { require('./services/attendanceService').start(); } catch (e) { console.error('attendance alerts:', e.message); } // الدوام: تنبيه دوام مفتوح > 11 ساعة واستراحة مفتوحة طويلة
+  try { require('./services/orderNumberMigration').start(); } catch (e) { console.error('order number migration:', e.message); } // أرقام الفواتير الدورية: إزالة الفهرس الفريد القديم
   try { require('./services/permissionMigrations').start(); } catch (e) { console.error('permissions migration:', e.message); } // المبيعات وإغلاق الجرد لمدير النظام: مرة واحدة
   try { require('./controllers/supportController').startRetention(); } catch (e) { console.error('support retention:', e.message); } // رسائل الزبائن: مدة الاحتفاظ (اختيارية)
   try { require('./services/obligationService').start(); } catch (e) { console.error('obligations:', e.message); } // الالتزامات الثابتة: الإغلاق والتصدير وتنبيه الأيام الفائتة

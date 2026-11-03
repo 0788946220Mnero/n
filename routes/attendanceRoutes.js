@@ -13,13 +13,19 @@ const att = require('../services/attendanceService');
  *   attendance:view     التقارير (عرض فقط)
  */
 const fail = (res, e) => res.status(e.status || 500).json({ success: false, message: e.status ? e.message : 'خطأ في الخادم' });
-const wrap = (fn) => (req, res) => Promise.resolve(fn(req, res)).catch((e) => { if (!e.status) console.error('attendance:', e); fail(res, e); });
+const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch((e) => { if (!e.status) console.error('attendance:', e); fail(res, e); });
 const limiter = (max, windowMs = 60 * 1000) => rateLimit({ windowMs, limit: max, standardHeaders: true, legacyHeaders: false, message: { success: false, message: 'محاولات كثيرة — انتظر قليلاً' } });
 
-const breaks = requirePermission('attendance:breaks', 'attendance:manage');
-const manage = requirePermission('attendance:manage');
-const view = requirePermission('attendance:view', 'attendance:manage', 'attendance:breaks');
-const record = requirePermission('attendance:view', 'attendance:manage', 'attendance:breaks', 'employees:manage', 'employees:pay', 'employees:view');
+// الصلاحية من accessOf: البريك لأي «مدير» ولمن يضيفه المدير مسؤول قسم في الإعدادات، لا من مفتاح الصلاحية وحده
+const need = (key) => wrap(async (req, res, next) => {
+  const a = await att.access(req.user);
+  if (!a[key]) return res.status(403).json({ success: false, message: 'ليس لديك صلاحية للقيام بهذا الإجراء' });
+  req.attAccess = a; next();
+});
+const breaks = need('breaks');
+const manage = need('manage');
+const view = need('view');
+const record = need('view');
 
 /* ═══ جهاز الحضور ═══ */
 router.post('/kiosk/pair', limiter(10, 15 * 60 * 1000), wrap(async (req, res) => {
@@ -37,6 +43,22 @@ router.post('/kiosk/pin', limiter(20), att.kioskAuth, wrap(async (req, res) => {
 
 /* ═══ بحساب مستخدم ═══ */
 router.use(protect);
+
+// ماذا يستطيع المستخدم (للوحة: إظهار الرابط والأزرار)
+router.get('/access', wrap(async (req, res) => { const a = await att.access(req.user); res.json({ success: true, access: { ...a } }); }));
+
+// صفحة الموظفين: الفترة الجارية منذ آخر تصفية، والتصفيات، والطباعة عبر محطة الطباعة
+router.get('/employees', view, wrap(async (req, res) => res.json({ success: true, ...(await att.employeesOverview(req.user, { all: req.query.all === '1' })) })));
+router.get('/employees/:id/full', view, wrap(async (req, res) => res.json({ success: true, ...(await att.employeeFull(req.params.id, req.user)) })));
+router.post('/employees/:id/settle', view, wrap(async (req, res) => res.status(201).json({ success: true, settlement: await att.settle(req.params.id, req.user, req.body) })));
+router.post('/employees/:id/print', view, wrap(async (req, res) => res.json({ success: true, ...(await att.printEmployee(req.params.id, req.user)) })));
+router.get('/settlements/:id', view, wrap(async (req, res) => res.json({ success: true, settlement: await att.getSettlement(req.params.id, req.user) })));
+router.post('/settlements/:id/print', view, wrap(async (req, res) => res.json({ success: true, ...(await att.printSettlement(req.params.id, req.user)) })));
+router.post('/report/print', view, wrap(async (req, res) => res.json({ success: true, ...(await att.printReport(req.body || {}, req.user)) })));
+
+// العطل ونصف الدوام لتاريخ (المدير)
+router.post('/days', manage, wrap(async (req, res) => res.status(201).json({ success: true, shift: await att.markDay(req.user, req.body) })));
+router.delete('/days/:id', manage, wrap(async (req, res) => { await att.deleteDay(req.params.id, req.user); res.json({ success: true }); }));
 
 // مسؤول القسم
 router.get('/live', breaks, wrap(async (req, res) => res.json({ success: true, ...(await att.live(req.user)) })));

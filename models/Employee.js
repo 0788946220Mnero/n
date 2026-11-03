@@ -23,6 +23,8 @@ const employeeSchema = new mongoose.Schema(
     pinFails: { type: Number, default: 0 },
     pinLockedUntil: { type: Date, default: null },
     lastPunchAt: { type: Date, default: null },
+    lastSettledAt: { type: Date, default: null },
+    settlingAt: { type: Date, default: null },  // قفل قصير أثناء التصفية (لا تصفيتان معاً)
   },
   { timestamps: true }
 );

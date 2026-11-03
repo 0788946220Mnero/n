@@ -266,7 +266,7 @@ const broadcast = (type, payload) => {
     if (type.startsWith('hall.') && !(c.role === 'admin' || (c.perms || []).includes('hall:use') || (c.perms || []).includes('hall:manage'))) return;
     if (type.startsWith('print.') && !['admin', 'manager', 'cashier'].includes(c.role)) return;
     // الدوام: للمدير ومسؤولي الأقسام ومن يرى التقارير فقط
-    if (type.startsWith('attendance.') && !(c.role === 'admin' || (c.perms || []).some((p) => p.startsWith('attendance:')))) return;
+    if (type.startsWith('attendance.') && !(c.role === 'admin' || c.role === 'manager' || (c.perms || []).some((p) => p.startsWith('attendance:')))) return;
     // تنبيهات سحابة الصور (ملفات ناقصة/جهاز منقطع): لمدير النظام فقط
     if (type.startsWith('imagecloud.') && c.role !== 'admin') return;
     if (c.socket.readyState === 1) {

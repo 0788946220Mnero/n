@@ -10,7 +10,7 @@ const { quoteDelivery, feeForValue } = require('../services/deliveryFeeService')
 const { priceOrderItems } = require('../services/pricingService');
 const realtime = require('../services/realtimeService');
 const pushService = require('../services/pushService');
-const { generateUniqueOrderNumber } = require('../utils/orderNumber');
+const { allocateOrderNumber, createOrderWithNumber } = require('../utils/orderNumber');
 const printerService = require('../services/printerService');
 const { extractCoordinates } = require('../utils/coords');
 const crypto = require('crypto');
@@ -211,7 +211,6 @@ const createOrder = async (req, res) => {
     const normalizedItems = priced.items;
 
     // ✅ رقم تسلسلي حقيقي (عدّاد ذرّي) بدل الرقم المشتق من الوقت
-    const orderNumber = await generateUniqueOrderNumber();
 
     // ═══ حساب رسوم التوصيل في الخادم (مصدر الحقيقة) ═══
     // نتجاهل أي deliveryFee قادم من الواجهة ونعيد حسابه من الإحداثيات وإعدادات المطعم.
@@ -306,8 +305,7 @@ const createOrder = async (req, res) => {
 
     const serverTotal = Number((computedItemsTotal + serverDeliveryFee).toFixed(2));
 
-    const order = await Order.create({
-      orderNumber,
+    const order = await createOrderWithNumber(Order, { orderType: orderType === 'pickup' ? 'pickup' : 'delivery' }, {
       customerName,
       phone,
       address,
@@ -372,7 +370,7 @@ const createOrder = async (req, res) => {
     require('../services/staffAlertService').emit('order.new', { userName: customerName, amount: order.total, orderNumber: order.orderNumber }, order);
 
     res.status(201).json({
-      success: true, order, orderNumber,
+      success: true, order, orderNumber: order.orderNumber,
       // للزبون: متابعة الطلب وسجل طلباته من جهازه
       orderId: String(order._id), trackingToken: order.trackingToken,
     });
@@ -899,10 +897,7 @@ const createPosOrder = async (req, res) => {
     let order;
     let orderNumber;
     try {
-      orderNumber = await generateUniqueOrderNumber();
-
-      order = await Order.create({
-        orderNumber,
+      order = await createOrderWithNumber(Order, 'takeaway', {
         customerName: 'سفري',
         phone: '',
         address: '',
@@ -934,6 +929,7 @@ const createPosOrder = async (req, res) => {
           },
         } : {}),
       });
+      orderNumber = order.orderNumber;
     } catch (e) {
       // لم تُنشأ الفاتورة: تُرجع النقاط المستبدلة فوراً
       if (redeemed) await loyalty.undoRedeem(saleRef, req.user).catch((x) => console.error('loyalty undo:', x.message));

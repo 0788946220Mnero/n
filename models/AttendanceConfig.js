@@ -12,7 +12,8 @@ const attendanceConfigSchema = new mongoose.Schema(
     requirePhoto: { type: Boolean, default: true },
     lateGraceMin: { type: Number, default: 10, min: 0, max: 180 },
     longBreakMin: { type: Number, default: 30, min: 1, max: 600 },
-    maxShiftHours: { type: Number, default: 14, min: 1, max: 48 },
+    maxShiftHours: { type: Number, default: 11, min: 1, max: 48 },   // تنبيه «دوام مفتوح» بعدها
+    rev: { type: Number, default: 2 },
     pinMaxDays: { type: Number, default: 90, min: 0, max: 3650 },   // 0 = بلا تغيير دوري
     photoDays: { type: Number, default: 60, min: 1, max: 365 },
     supervisors: {

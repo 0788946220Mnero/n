@@ -358,6 +358,6 @@ function storeStatementHtml({ brand, store, l, from, to }) {
 }
 
 module.exports = {
-  priceSheetHtml, invoiceHtml, esc, logoDataUri, colorLogoDataUri, stampSvg,
+  priceSheetHtml, invoiceHtml, esc, logoDataUri, page, BASE_CSS, colorLogoDataUri, stampSvg,
   priceSheetA4Html, permitHtml, paymentReceiptHtml, tripReceiptHtml, driverStatementHtml, storeStatementHtml,
 };

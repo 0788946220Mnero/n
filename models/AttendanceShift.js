@@ -17,6 +17,7 @@ const breakSchema = new mongoose.Schema(
     by: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
     byName: { type: String, default: '' },
     endedByName: { type: String, default: '' },
+    alertedAt: { type: Date, default: null },            // أُرسل تنبيه «استراحة مفتوحة طويلة»
   },
   { _id: true }
 );
@@ -38,6 +39,10 @@ const attendanceShiftSchema = new mongoose.Schema(
     section: { type: String, default: '' },
     workDay: { type: String, required: true, index: true },   // YYYY-MM-DD بتوقيت عمّان
     status: { type: String, enum: ['open', 'closed'], default: 'open', index: true },
+    // work دوام · half نصف دوام (يحسب نصف ساعات الموظف) · off عطلة (بلا ساعات) — النصف والعطلة يسجّلهما المدير
+    dayType: { type: String, enum: ['work', 'half', 'off'], default: 'work' },
+    settlement: { type: mongoose.Schema.Types.ObjectId, ref: 'EmployeeSettlement', default: null, index: true },
+    alertLongAt: { type: Date, default: null },          // أُرسل تنبيه «دوام مفتوح أكثر من الحد»
     clockInAt: { type: Date, required: true, index: true },
     clockOutAt: { type: Date, default: null },
     inDevice: { type: String, default: '' },

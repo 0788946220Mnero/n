@@ -257,6 +257,7 @@ const voidExpense = async (req, res) => {
   if (!expense) return res.status(404).json({ message: 'المصروف غير موجود' });
   if (expense.closed && expense.source !== 'capital') return res.status(400).json({ message: 'أُغلق جرد هذا المصروف، فلا يمكن إلغاؤه' });
   if (expense.voided) return res.status(400).json({ message: 'المصروف ملغى مسبقاً' });
+  if (expense.settlement) return res.status(400).json({ message: 'هذا الصرف داخل في تصفية موظف سابقة — لا يُلغى' });
 
   // قسط التزام ثابت: يُلغى ما دامت دورته مفتوحة (بعد موعدها سُدّدت أو صُدّرت للذمم)
   let obligationCycle = null;
@@ -275,7 +276,7 @@ const voidExpense = async (req, res) => {
   await require('../utils/txn').withTxn(async (session) => {
     const o = session ? { session } : {};
     // شرط «غير ملغى» يمنع إلغاءين متزامنين من إرجاع المبلغ مرتين
-    const r = await Expense.updateOne({ _id: expense._id, voided: { $ne: true } }, { $set: { voided: true, voidedByName: by, voidedAt: now } }, o);
+    const r = await Expense.updateOne({ _id: expense._id, voided: { $ne: true }, settlement: null }, { $set: { voided: true, voidedByName: by, voidedAt: now } }, o);
     if (!(r.modifiedCount || r.nModified)) throw Object.assign(new Error('المصروف ملغى مسبقاً'), { status: 400 });
     try {
       // يعود المبلغ للمتبقي فيُوزَّع على الأيام الباقية

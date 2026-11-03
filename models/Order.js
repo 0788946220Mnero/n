@@ -37,7 +37,10 @@ const customerRequestSchema = new mongoose.Schema(
 
 const orderSchema = new mongoose.Schema(
   {
-    orderNumber: { type: String, required: true, unique: true },
+    // الرقم الظاهر على الفاتورة — يدور داخل سلسلته (utils/orderNumber.js) فلا يكون فريداً وحده
+    orderNumber: { type: String, required: true, index: true },
+    numberSeries: { type: String, enum: ['takeaway', 'hall', 'delivery', ''], default: '' },
+    numberSeq: { type: Number, default: null },
     // العلامة/المطعم الذي جاء منه الطلب (للعزل بين البراق ورواء)
     // القيمة الافتراضية 'diyar' تحافظ على كل الطلبات القديمة كما هي دون أي تغيير
     brand: { type: String, default: 'diyar', index: true },
@@ -182,6 +185,8 @@ orderSchema.set('toJSON', {
 orderSchema.index({ createdAt: -1 });
 orderSchema.index({ status: 1, createdAt: -1 });
 orderSchema.index({ orderType: 1, source: 1, createdAt: -1 });
+// لا رقمان متطابقان أبداً: التسلسل الكامل فريد داخل كل سلسلة (الطلبات القديمة بلا تسلسل خارج الفهرس)
+orderSchema.index({ numberSeries: 1, numberSeq: 1 }, { unique: true, partialFilterExpression: { numberSeq: { $type: 'number' } }, name: 'order_number_series' });
 orderSchema.index({ driver: 1, createdAt: -1 });
 orderSchema.index({ phone: 1, createdAt: -1 });
 
