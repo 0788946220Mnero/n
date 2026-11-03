@@ -5,6 +5,8 @@
  *   (numberSeries, numberSeq). يُعاد التحقق عند كل تشغيل (آمن ومتكرر)، فلا يبقى الفهرس القديم أبداً.
  */
 const Order = require('../models/Order');
+const Counter = require('../models/Counter');
+const { dropForeignUnique } = require('../utils/orderNumber');
 
 async function migrate() {
   const coll = Order.collection;
@@ -15,6 +17,9 @@ async function migrate() {
     await coll.dropIndex(old.name);
     console.log('🔢 أرقام الفواتير: أُزيل الفهرس الفريد القديم على orderNumber (الأرقام تدور الآن)');
   }
+  // فهارس فريدة غريبة (مثل key_1) على العدّادات أو الطلبات تمنع البيع — تُزال عند كل تشغيل
+  await dropForeignUnique(Counter);
+  await dropForeignUnique(Order);
   // الفهارس الجديدة (العادي على الرقم، والفريد على السلسلة والتسلسل)
   await Order.createIndexes().catch((e) => console.error('order indexes:', e.message));
   return !!old;

@@ -59,8 +59,18 @@ async function seed(series) {
 async function allocateOrderNumber(kind = {}) {
   const series = typeof kind === 'string' ? kind : seriesOf(kind);
   const cfg = SERIES[series] || SERIES.takeaway;
-  await seed(series);
-  const c = await Counter.findOneAndUpdate({ _id: `order:${series}` }, { $inc: { seq: 1 } }, { new: true, upsert: true });
+  let c;
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      await seed(series);
+      c = await Counter.findOneAndUpdate({ _id: `order:${series}` }, { $inc: { seq: 1 } }, { new: true, upsert: true });
+      break;
+    } catch (e) {
+      // فهرس فريد غريب على مجموعة العدّادات (مثل key_1 من نسخة/تطبيق قديم) يرفض العدّاد الجديد
+      if (e && e.code === 11000 && attempt < 2 && !isIdDup(e)) { await dropForeignUnique(Counter); continue; }
+      throw e;
+    }
+  }
   const seq = c.seq;
   const shown = ((seq - 1) % cfg.cycle) + 1;
   return { orderNumber: `${PREFIX}${shown}`, numberSeries: series, numberSeq: seq };
@@ -86,6 +96,8 @@ async function createOrderWithNumber(Order, kind, data) {
         continue;
       }
       if (key.includes('numberSeq') || /order_number_series/.test(msg)) { numbering = await allocateOrderNumber(kind); continue; }
+      // فهرس فريد على حقل غير موجود في نموذج الطلب (مثل key_1) ← يُزال ثم يُعاد الحفظ
+      if (key.length && !key.some((k) => Order.schema.path(k))) { await dropForeignUnique(Order); continue; }
       throw e;
     }
   }
@@ -113,6 +125,38 @@ async function dropLegacyUnique(Order) {
   return dropping;
 }
 
+function isIdDup(e) {
+  const k = Object.keys((e && (e.keyPattern || e.keyValue)) || {});
+  return k.length === 1 && k[0] === '_id';
+}
+
+/**
+ * يزيل أي فهرس فريد على حقول لا يعرفها النموذج إطلاقاً (بقايا نسخة قديمة أو تطبيق آخر).
+ * مثال حقيقي من الإنتاج: key_1 على counters — كل وثيقة بلا key تُعدّ key:null فيُرفض العدّاد الثاني.
+ * فهارس حقول النموذج نفسه لا تُلمس.
+ */
+const foreignDropping = new Map();
+async function dropForeignUnique(Model) {
+  const name = Model.collection.collectionName;
+  if (!foreignDropping.has(name)) {
+    foreignDropping.set(name, (async () => {
+      try {
+        const idx = await Model.collection.indexes();
+        for (const i of idx) {
+          if (!i.unique || !i.key || i.name === '_id_') continue;
+          const fields = Object.keys(i.key);
+          if (fields.some((f) => f === '_id' || Model.schema.path(f))) continue;
+          await Model.collection.dropIndex(i.name);
+          console.log(`🧹 أُزيل فهرس فريد غريب ${name}.${i.name} (حقول ليست في النموذج: ${fields.join(', ')})`);
+        }
+      } catch (err) {
+        if (!(err && err.codeName === 'NamespaceNotFound')) console.error(`dropForeignUnique ${name}:`, err.message);
+      } finally { setTimeout(() => foreignDropping.delete(name), 5000); }
+    })());
+  }
+  return foreignDropping.get(name);
+}
+
 /** توافق مع الكود القديم: الرقم الظاهر فقط (سلسلة السفري). */
 const generateUniqueOrderNumber = async (kind) => (await allocateOrderNumber(kind || 'takeaway')).orderNumber;
 
@@ -127,4 +171,5 @@ async function seriesStatus() {
   return out;
 }
 
-module.exports = { createOrderWithNumber, dropLegacyUnique, allocateOrderNumber, generateUniqueOrderNumber, numericPart, seriesOf, seriesStatus, SERIES };
+module.exports = {
+  dropForeignUnique, createOrderWithNumber, dropLegacyUnique, allocateOrderNumber, generateUniqueOrderNumber, numericPart, seriesOf, seriesStatus, SERIES };
