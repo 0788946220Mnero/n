@@ -133,6 +133,23 @@ const finishJob = async (req, res) => {
   res.json({ success: true, job });
 };
 
+/* ═══ محطات الطباعة: أجهزة كاشير داخل المطعم مكلّفة بأوامر الطباعة عن بُعد ═══
+   المحطة ترسل نبضة كل ~25 ثانية؛ تُعدّ متصلة إن وصلت نبضتها خلال 75 ثانية.
+   أجهزة الكاشير الأخرى تترك الأوامر للمحطة ما دامت متصلة، وتلتقطها إن غابت. */
+const stations = new Map(); // name → { name, at, user }
+const STATION_ALIVE_MS = 75 * 1000;
+const onlineStations = () => [...stations.values()].filter((s) => Date.now() - s.at < STATION_ALIVE_MS);
+
+// POST /api/print-jobs/station  { name }
+const stationPing = async (req, res) => {
+  const name = String((req.body && req.body.name) || '').trim().slice(0, 60) || nameOf(req.user);
+  stations.set(name, { name, at: Date.now(), user: nameOf(req.user) });
+  for (const [k, v] of stations) if (Date.now() - v.at > 24 * 3600 * 1000) stations.delete(k);
+  res.json({ success: true, stations: onlineStations() });
+};
+// GET /api/print-jobs/stations
+const listStations = async (_req, res) => res.json({ success: true, stations: onlineStations() });
+
 // GET /api/print-jobs/:id — ليتابع المرسِل حالة مهمته إن فاته حدث البث
 const getJob = async (req, res) => {
   const job = await PrintJob.findById(req.params.id).lean();
@@ -140,4 +157,4 @@ const getJob = async (req, res) => {
   res.json({ success: true, job });
 };
 
-module.exports = wrapAll({ createJob, pendingJobs, claimJob, finishJob, getJob });
+module.exports = { ...wrapAll({ createJob, pendingJobs, claimJob, finishJob, getJob, stationPing, listStations }), _stations: stations };

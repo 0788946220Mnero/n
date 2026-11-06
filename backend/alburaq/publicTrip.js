@@ -35,6 +35,8 @@ function publicTrip(t, viewer = 'admin') {
     requestedAt: t.requestedAt,
     acceptedAt: t.acceptedAt || null,
     pickedAt: t.pickedAt || null,
+    // كيف استُلم من المطعم: code (المطعم أدخل رمز السائق) | driver (أكّده السائق بنفسه) | store | admin
+    pickupBy: t.pickupBy || '',
     completedAt: t.completedAt || null,
     cancelledAt: t.cancelledAt || null,
     rated: !!t.rated,
@@ -52,17 +54,25 @@ function publicTrip(t, viewer = 'admin') {
     note: x.note || '',
     status: x.status,
     deliveredAt: x.deliveredTime || null,
+    // موقع السائق لحظة التسليم (GPS) — يدخل السجل
+    deliveredPoint: x.deliveredAt && Number.isFinite(x.deliveredAt.lat) ? { lat: x.deliveredAt.lat, lng: x.deliveredAt.lng } : null,
+    deliveredAccuracy: x.deliveredAccuracy ?? null,
     legKm: x.legKm ?? null,
     // للإدارة والمتجر: تسليم بعيد عن الموقع المحدد مسبقاً (مراجعة فقط)
     offsetM: viewer === 'driver' ? undefined : (x.offsetM ?? null),
   }));
   if (viewer === 'driver') {
-    return { ...base, customerName: t.customer ? t.customer.name || '' : '', customerLocation: customerLoc, customerPhone: picked && t.customer && t.customer.phone ? t.customer.phone : null };
+    // رمز الاستلام للسائق وحده (لا يراه المطعم — يأخذه من شاشة السائق)
+    return { ...base, pickupCode: t.status === 'assigned' ? t.pickupCode || '' : '', customerName: t.customer ? t.customer.name || '' : '', customerLocation: customerLoc, customerPhone: picked && t.customer && t.customer.phone ? t.customer.phone : null };
   }
   if (viewer === 'store') {
     return { ...base, customerName: t.customer ? t.customer.name || '' : '', customerLocation: customerLoc, customerPhone: t.customer ? t.customer.phone : null };
   }
-  return { ...base, customerName: t.customer ? t.customer.name || '' : '', customerLocation: customerLoc, customerPhone: t.customer ? t.customer.phone : null };
+  return {
+    ...base, customerName: t.customer ? t.customer.name || '' : '', customerLocation: customerLoc, customerPhone: t.customer ? t.customer.phone : null,
+    pickupPoint: t.pickupPoint && Number.isFinite(t.pickupPoint.lat) ? { lat: t.pickupPoint.lat, lng: t.pickupPoint.lng } : null,
+    pickupOffsetM: t.pickupOffsetM ?? null,
+  };
 }
 
 module.exports = { publicTrip };

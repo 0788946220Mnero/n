@@ -69,7 +69,7 @@ const corsOptions = {
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'x-print-token'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'x-print-token', 'x-kiosk-token'],
   maxAge: 86400, // تخزين نتيجة preflight يوماً كاملاً — أسرع للموقع
 };
 
@@ -106,7 +106,10 @@ app.use('/api/receivables', require('./routes/receivableRoutes')); // الذمم
 app.use('/api/supplies', require('./routes/supplyRoutes')); // قائمة البضائع المطلوبة
 app.use('/api/capital', require('./routes/capitalRoutes')); // رأس المال
 app.use('/api/employees', require('./routes/employeeRoutes')); // الموظفون وصرفهم
-app.use('/api/center', require('./routes/centerRoutes')); // بيع سنتر: طلبات هاتفية + سجل الزبون + مراقبة الموظفين
+app.use('/api/center', require('./routes/centerRoutes'));
+app.use('/api/hall', require('./routes/hallRoutes')); // الصالة: الطاولات والطلبات من التابلت والجوال، والقبض عند الكاشير // بيع سنتر: طلبات هاتفية + سجل الزبون + مراقبة الموظفين
+app.use('/api/pos-devices', require('./routes/posDeviceRoutes')); // رمز إعدادات أجهزة الكاشير (DiyarPOS) — يعيّنه مدير النظام
+app.use('/api/attendance', require('./routes/attendanceRoutes')); // الدوام: جهاز الحضور (PIN + صورة + شبكة المطعم)، البريك من مسؤول القسم، الاستثناءات والتقارير
 app.use('/api/live-report', require('./routes/liveReportRoutes')); // التقرير الحي على شاشة القفل (Web Push)
 app.use('/api/staff-alerts', require('./routes/staffAlertRoutes')); // إشعارات الطاقم: من مدير النظام وحركات المطعم لأجهزة الموظفين
 app.use('/api/obligations', require('./routes/obligationRoutes'));
@@ -126,7 +129,8 @@ app.use('/api/image-cloud', (req, res, next) => {
 });
 app.use('/api/image-cloud', require('./routes/imageCloudRoutes')); // سحابة الصور الخاصة (ImageStorage داخل DiyarPOS) — مدير النظام
 app.use('/api/loyalty', require('./routes/loyaltyRoutes')); // الولاء: محفظة الزبون، الكاشير، الإدارة، Apple Wallet Web Service
-app.use('/api/offers', require('./routes/offerRoutes')); // العروض الترويجية: روابط بمعاينة تفتح صنفاً أو تصنيفاً بخصم ثابت
+app.use('/api/offers', require('./routes/offerRoutes'));
+app.use('/api/profit', require('./profit/routes')); // إدارة المطعم والربحية: الوصفات والمخزون وقائمة الدخل المفسَّرة // العروض الترويجية: روابط بمعاينة تفتح صنفاً أو تصنيفاً بخصم ثابت
 // صفحة مشاركة العرض: وسوم og لفيسبوك وواتساب (الموقع على Netlify يمرّر /o/* إلى هنا)
 app.get('/o/:code', require('./controllers/offerController').sharePage);
 
@@ -186,6 +190,10 @@ server.listen(PORT, () => {
   // التقرير الحي: تحديث دوري أثناء الدوام (كل 15 دقيقة افتراضياً)
   try { require('./services/liveReportService').start(); } catch (e) { console.error('liveReport:', e.message); }
   try { require('./services/chatService').start(); } catch (e) { console.error('chat:', e.message); } // دردشة الطاقم: مدة الاحتفاظ بالوسائط
+  try { require('./services/brandMigration').start(); } catch (e) { console.error('brand migration:', e.message); } // «ديار الأنباط» ← «البراق» في المطبوعات: مرة واحدة
+  try { require('./services/attendanceService').start(); } catch (e) { console.error('attendance alerts:', e.message); } // الدوام: تنبيه دوام مفتوح > 11 ساعة واستراحة مفتوحة طويلة
+  try { require('./profit/services/consumption').start(); } catch (e) { console.error('profit consumption:', e.message); } // ترحيل تكلفة المبيعات واستهلاك المخزون كل دقيقة
+  try { require('./services/orderNumberMigration').start(); } catch (e) { console.error('order number migration:', e.message); } // أرقام الفواتير الدورية: إزالة الفهرس الفريد القديم
   try { require('./services/permissionMigrations').start(); } catch (e) { console.error('permissions migration:', e.message); } // المبيعات وإغلاق الجرد لمدير النظام: مرة واحدة
   try { require('./controllers/supportController').startRetention(); } catch (e) { console.error('support retention:', e.message); } // رسائل الزبائن: مدة الاحتفاظ (اختيارية)
   try { require('./services/obligationService').start(); } catch (e) { console.error('obligations:', e.message); } // الالتزامات الثابتة: الإغلاق والتصدير وتنبيه الأيام الفائتة

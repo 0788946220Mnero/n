@@ -38,7 +38,7 @@ const updateSettings = async (req, res) => {
     const settings = await getOrCreateSettings();
     const updatable = [
       'restaurantName', 'logo', 'workHours', 'workHoursNote',
-      'phones', 'whatsapp', 'complaintsWhatsapp', 'mapUrl', 'location',
+      'phones', 'printPhone', 'whatsapp', 'complaintsWhatsapp', 'mapUrl', 'location',
       'facebook', 'instagram', 'tiktok', 'deliveryFee', 'minOrderAmount',
       'aboutTitle', 'aboutText', 'aboutImage',
       'heroBackgroundEnabled', 'heroBackgroundType', 'heroBackgroundUrl',
@@ -46,6 +46,11 @@ const updateSettings = async (req, res) => {
       'delivery',
       'invoiceSettings', 'kitchenTicketSettings',
     ];
+
+    // رقم الطباعة: أرقام ومسافات و+ و- فقط، حتى 20 حرفاً — لا رقم افتراضي إطلاقاً
+    if (req.body.printPhone !== undefined) {
+      req.body.printPhone = String(req.body.printPhone || '').replace(/[^\d+\- ]/g, '').trim().slice(0, 20);
+    }
 
     /* إعدادات الطباعة: مفاتيح show* منطقية فقط + حجم الخط + نص التذييل — لا شيء آخر يُخزَّن.
        (كانت تُرسل من اللوحة ولا تُحفظ، فتعود للافتراضي بعد كل تحميل) */

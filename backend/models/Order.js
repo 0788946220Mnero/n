@@ -37,13 +37,16 @@ const customerRequestSchema = new mongoose.Schema(
 
 const orderSchema = new mongoose.Schema(
   {
-    orderNumber: { type: String, required: true, unique: true },
+    // الرقم الظاهر على الفاتورة — يدور داخل سلسلته (utils/orderNumber.js) فلا يكون فريداً وحده
+    orderNumber: { type: String, required: true, index: true },
+    numberSeries: { type: String, enum: ['takeaway', 'hall', 'delivery', ''], default: '' },
+    numberSeq: { type: Number, default: null },
     // العلامة/المطعم الذي جاء منه الطلب (للعزل بين البراق ورواء)
     // القيمة الافتراضية 'diyar' تحافظ على كل الطلبات القديمة كما هي دون أي تغيير
     brand: { type: String, default: 'diyar', index: true },
     // مصدر الطلب: الموقع، أو تطبيق نقطة البيع (بيع مباشر على الكاشير)
     // center = «بيع سنتر»: طلب هاتفي أدخله موظف سنتر/مطعم باسم الزبون ورقمه
-    source: { type: String, enum: ['web', 'pos', 'app', 'center'], default: 'web', index: true },
+    source: { type: String, enum: ['web', 'pos', 'app', 'center', 'hall'], default: 'web', index: true },
     centerBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null, index: true },
     centerByName: { type: String, default: '' },
     addressOption: { type: String, default: '' }, // المنطقة من خيارات العنوان (إن وُجدت)
@@ -57,7 +60,13 @@ const orderSchema = new mongoose.Schema(
     total: { type: Number, required: true },
     // cash نقدي | cliq كليك | card فيزا/بطاقة | online (قديم، يبقى للتوافق)
     paymentMethod: { type: String, enum: ['cash', 'cliq', 'card', 'online'], default: 'cash' },
-    orderType: { type: String, enum: ['delivery', 'pickup'], default: 'delivery' },
+    orderType: { type: String, enum: ['delivery', 'pickup', 'dinein'], default: 'delivery' },
+    // الصالة: الطاولة والحساب المفتوح الذي أُغلق بهذا الطلب
+    tableName: { type: String, default: '' },
+    hallTab: { type: mongoose.Schema.Types.ObjectId, ref: 'HallTab', default: null },
+    // قسائم الأقسام: أول جهاز يحجزها يطبعها (عدة كاشيرات على نفس الطابعات بلا تكرار)
+    ticketsAt: { type: Date, default: null },
+    ticketsBy: { type: String, default: '' },
 
     // ═══ بيانات التوصيل (اختيارية — الطلبات القديمة تبقى صالحة) ═══
     customerLatitude: { type: Number, default: null },
@@ -106,6 +115,10 @@ const orderSchema = new mongoose.Schema(
     closed: { type: Boolean, default: false, index: true },
     closedAt: { type: Date, default: null },
     shiftId: { type: String, default: '' },
+    // محرك الربحية: رُحّلت تكلفة الطلب واستهلاكه من المخزون (profit/services/consumption.js)
+    costPosted: { type: Boolean, default: false, index: true },
+    costPostedAt: { type: Date, default: null },
+    costReversed: { type: Boolean, default: false },
     // دفتر التوصيل: رسوم التوصيل أمانة للمندوبين المستقلين، لا تدخل جرد أي مستخدم.
     // تُسوّى مرة واحدة في «جرد المطعم كاملاً» للأدمن فقط — مستقلة عن أرشفة الطلب نفسه.
     deliverySettled: { type: Boolean, default: false, index: true },
@@ -176,6 +189,8 @@ orderSchema.set('toJSON', {
 orderSchema.index({ createdAt: -1 });
 orderSchema.index({ status: 1, createdAt: -1 });
 orderSchema.index({ orderType: 1, source: 1, createdAt: -1 });
+// لا رقمان متطابقان أبداً: التسلسل الكامل فريد داخل كل سلسلة (الطلبات القديمة بلا تسلسل خارج الفهرس)
+orderSchema.index({ numberSeries: 1, numberSeq: 1 }, { unique: true, partialFilterExpression: { numberSeq: { $type: 'number' } }, name: 'order_number_series' });
 orderSchema.index({ driver: 1, createdAt: -1 });
 orderSchema.index({ phone: 1, createdAt: -1 });
 

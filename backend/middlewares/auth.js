@@ -20,6 +20,18 @@ const companyAllowed = (req) => {
 };
 
 /**
+ * نادل الصالة (waiter): الطاولات والطلبات فقط — /api/hall بتحقق صلاحياته،
+ * وقراءة المنيو (الأصناف والتصنيفات والإعدادات العامة)، ومتابعة حالة أوامر الطباعة، والدردشة.
+ */
+const waiterAllowed = (req) => {
+  const url = String(req.originalUrl || '').split('?')[0];
+  if (url.startsWith('/api/auth/') || url.startsWith('/api/hall/') || url === '/api/hall' || url === '/api/users/me') return true;
+  if (/^\/api\/(devices|chat)(\/|$)/.test(url)) return true;
+  if (req.method !== 'GET') return false;
+  return /^\/api\/(products|categories|settings)(\/|$)/.test(url) || /^\/api\/print-jobs\/(stations|[a-f0-9]{24})$/.test(url);
+};
+
+/**
  * مراقب البيانات: قراءة فقط. أي طلب يغيّر شيئاً يُرفض هنا مهما كانت الصلاحيات أو الواجهة —
  * عدا حسابه نفسه (الخروج، تجديد الجلسة) وتسجيل جهازه للإشعارات.
  */
@@ -72,6 +84,9 @@ const protect = async (req, res, next) => {
     }
     if (user.role === 'company' && !companyAllowed(req)) {
       return res.status(403).json({ message: 'حساب شركة البراق مخصّص لأقسام التوصيل فقط', code: 'COMPANY_ONLY' });
+    }
+    if (user.role === 'waiter' && !waiterAllowed(req)) {
+      return res.status(403).json({ message: 'حساب النادل مخصّص للصالة فقط', code: 'WAITER_ONLY' });
     }
     if (user.role === 'observer' && !observerAllowed(req)) {
       return res.status(403).json({ message: 'حساب مراقب البيانات للعرض فقط — لا يمكنه التعديل', code: 'READ_ONLY' });

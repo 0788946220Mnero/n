@@ -10,7 +10,7 @@ const { quoteDelivery, feeForValue } = require('../services/deliveryFeeService')
 const { priceOrderItems } = require('../services/pricingService');
 const realtime = require('../services/realtimeService');
 const pushService = require('../services/pushService');
-const { generateUniqueOrderNumber } = require('../utils/orderNumber');
+const { allocateOrderNumber, createOrderWithNumber } = require('../utils/orderNumber');
 const printerService = require('../services/printerService');
 const { extractCoordinates } = require('../utils/coords');
 const crypto = require('crypto');
@@ -211,7 +211,6 @@ const createOrder = async (req, res) => {
     const normalizedItems = priced.items;
 
     // ✅ رقم تسلسلي حقيقي (عدّاد ذرّي) بدل الرقم المشتق من الوقت
-    const orderNumber = await generateUniqueOrderNumber();
 
     // ═══ حساب رسوم التوصيل في الخادم (مصدر الحقيقة) ═══
     // نتجاهل أي deliveryFee قادم من الواجهة ونعيد حسابه من الإحداثيات وإعدادات المطعم.
@@ -306,8 +305,7 @@ const createOrder = async (req, res) => {
 
     const serverTotal = Number((computedItemsTotal + serverDeliveryFee).toFixed(2));
 
-    const order = await Order.create({
-      orderNumber,
+    const order = await createOrderWithNumber(Order, { orderType: orderType === 'pickup' ? 'pickup' : 'delivery' }, {
       customerName,
       phone,
       address,
@@ -372,7 +370,7 @@ const createOrder = async (req, res) => {
     require('../services/staffAlertService').emit('order.new', { userName: customerName, amount: order.total, orderNumber: order.orderNumber }, order);
 
     res.status(201).json({
-      success: true, order, orderNumber,
+      success: true, order, orderNumber: order.orderNumber,
       // للزبون: متابعة الطلب وسجل طلباته من جهازه
       orderId: String(order._id), trackingToken: order.trackingToken,
     });
@@ -899,10 +897,7 @@ const createPosOrder = async (req, res) => {
     let order;
     let orderNumber;
     try {
-      orderNumber = await generateUniqueOrderNumber();
-
-      order = await Order.create({
-        orderNumber,
+      order = await createOrderWithNumber(Order, 'takeaway', {
         customerName: 'سفري',
         phone: '',
         address: '',
@@ -934,6 +929,7 @@ const createPosOrder = async (req, res) => {
           },
         } : {}),
       });
+      orderNumber = order.orderNumber;
     } catch (e) {
       // لم تُنشأ الفاتورة: تُرجع النقاط المستبدلة فوراً
       if (redeemed) await loyalty.undoRedeem(saleRef, req.user).catch((x) => console.error('loyalty undo:', x.message));
@@ -988,6 +984,34 @@ const markPrinted = async (req, res) => {
     res.json({ success: true, order });
   } catch (err) {
     res.status(500).json({ success: false, message: 'تعذر تحديث حالة الطباعة', error: err.message });
+  }
+};
+
+/**
+ * POST /api/orders/:id/tickets-claim  { station }
+ * قسائم الأقسام: أول جهاز كاشير يحجزها يطبعها — عدة كاشيرات على نفس طابعات المطبخ بلا تكرار.
+ * 200 = اطبعها أنت · 409 = طبعها جهاز آخر (ticketsBy)
+ */
+const claimTickets = async (req, res) => {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(400).json({ success: false, message: 'طلب غير صالح' });
+    const station = String((req.body && req.body.station) || handlerName(req.user)).slice(0, 60);
+    // فشلت الطباعة بعد الحجز: يُحرَّر ليعيدها هذا الجهاز أو غيره
+    if (req.body && req.body.release) {
+      await Order.updateOne({ _id: req.params.id, ticketsBy: station }, { $set: { ticketsAt: null, ticketsBy: '' } });
+      return res.json({ success: true, released: true });
+    }
+    const order = await Order.findOneAndUpdate(
+      { _id: req.params.id, $or: [{ ticketsAt: null }, { ticketsAt: { $exists: false } }] },
+      { $set: { ticketsAt: new Date(), ticketsBy: station } },
+      { new: true }
+    ).select('_id ticketsBy ticketsAt');
+    if (order) return res.json({ success: true, claimed: true, station });
+    const cur = await Order.findById(req.params.id).select('ticketsBy ticketsAt').lean();
+    if (!cur) return res.status(404).json({ success: false, message: 'الطلب غير موجود' });
+    res.status(409).json({ success: false, claimed: false, ticketsBy: cur.ticketsBy || '', message: `طُبعت قسائم هذا الطلب على ${cur.ticketsBy || 'جهاز آخر'}` });
+  } catch (err) {
+    res.status(500).json({ success: false, message: 'تعذّر حجز القسائم' });
   }
 };
 
@@ -1527,6 +1551,6 @@ module.exports = wrapAll({
   trackOrder,
   trackBatch,
   myOrders,
-  closeShift, getOrders, getOrder, createOrder, confirmOrder, updateOrderStatus, getDashboardStats, getPrintQueue, markPrinted, createPosOrder, getBlockedPhones, blockPhone, unblockPhone });
+  closeShift, getOrders, getOrder, createOrder, confirmOrder, updateOrderStatus, getDashboardStats, getPrintQueue, markPrinted, claimTickets, createPosOrder, getBlockedPhones, blockPhone, unblockPhone });
 // حساب الجرد نفسه لتقرير المصروفات (expenseController.report) — مصدر واحد للأرقام
 module.exports.summarizeOrders = summarizeOrders;

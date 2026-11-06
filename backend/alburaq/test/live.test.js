@@ -191,15 +191,17 @@ test('المطعم يطلب ← الإدارة تُنبَّه ← السائق �
 });
 
 test('الاستلام ← المدة للزبون، ثم التسليم يدخل سجل السائق', async () => {
-  assert.equal((await call(S.store, 'POST', `/api/brq/store/trips/${S.trip}/pickup`)).status, 200);
+  const code = (await call(S.driver, 'GET', '/api/brq/driver/trips')).data.trips[0].pickupCode;
+  assert.equal((await call(S.store, 'POST', `/api/brq/store/trips/${S.trip}/pickup`, { code })).status, 200);
   const list = await call(S.store, 'GET', '/api/brq/store/trips');
   assert.equal(list.data.trips.find((x) => x.id === S.trip).live.target, 'customer');
 
   const empty = await call(S.driver, 'GET', '/api/brq/driver/history');
   assert.equal(empty.data.trips.length, 0);
   const mine = (await call(S.driver, 'GET', '/api/brq/driver/trips')).data.trips[0];
-  await call(S.driver, 'POST', '/api/brq/driver/location', mine.stops[0].areaCenter);
-  const done = await call(S.driver, 'POST', `/api/brq/driver/trips/${S.trip}/stops/${mine.stops[0].id}/complete`);
+  // التسليم يحمل موقع السائق الحالي من جهازه (GPS لحظة الضغط)
+  const here = { lat: mine.stops[0].areaCenter.lat + 0.0011, lng: mine.stops[0].areaCenter.lng, accuracy: 9 };
+  const done = await call(S.driver, 'POST', `/api/brq/driver/trips/${S.trip}/stops/${mine.stops[0].id}/complete`, here);
   assert.equal(done.status, 200, done.data.message);
   assert.equal(done.data.trip.status, 'completed');
 
@@ -210,6 +212,14 @@ test('الاستلام ← المدة للزبون، ثم التسليم يدخ�
   assert.ok(h.data.trips[0].completedAt);
   assert.ok(h.data.trips[0].receiptNo);
   assert.equal(h.data.trips[0].pricing.companyFils, undefined, 'السائق لا يرى حصة الشركة في السجل');
+  // السجل: كيف استُلم، ومتى وأين سُلِّم كل زبون
+  assert.equal(h.data.trips[0].pickupBy, 'code');
+  assert.ok(h.data.trips[0].pickedAt);
+  assert.deepEqual(h.data.trips[0].stops[0].deliveredPoint, { lat: here.lat, lng: here.lng });
+  assert.equal(h.data.trips[0].stops[0].deliveredAccuracy, 9);
+  assert.ok(h.data.trips[0].stops[0].deliveredAt);
+  const st = (await call(S.store, 'GET', '/api/brq/store/trips')).data.trips.find((x) => x.id === S.trip);
+  assert.deepEqual(st.stops[0].deliveredPoint, { lat: here.lat, lng: here.lng }, 'المطعم يرى موقع التسليم');
   assert.equal((await call(S.driver, 'GET', '/api/brq/driver/trips')).data.trips.length, 0, 'اختفت من الخريطة');
   assert.equal((await call(S.store, 'GET', '/api/brq/driver/history')).status, 401);
 

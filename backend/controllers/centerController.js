@@ -22,7 +22,7 @@ const realtime = require('../services/realtimeService');
 const pushService = require('../services/pushService');
 const printerService = require('../services/printerService');
 const presence = require('../services/presenceService');
-const { generateUniqueOrderNumber } = require('../utils/orderNumber');
+const { createOrderWithNumber } = require('../utils/orderNumber');
 const { quoteDelivery, feeForValue } = require('../services/deliveryFeeService');
 const { logActivity } = require('../utils/activity');
 
@@ -165,8 +165,7 @@ const createOrder = async (req, res) => {
   const now = new Date();
   // كل طلبات السنتر (موظف سنتر أو موظف مطعم) تُعامل معاملة طلب المنصة:
   // معلّقة + تنبيه للكاشير + قسائم المطبخ تلقائياً، والتأكيد وطباعة الفاتورة يدوياً من الكاشير
-  const order = await Order.create({
-    orderNumber: await generateUniqueOrderNumber(),
+  const order = await createOrderWithNumber(Order, { orderType }, {
     customerName, phone, address, addressOption: orderType === 'delivery' ? addressOption : '',
     items: priced.items,
     itemsTotal: priced.itemsTotal,

@@ -38,6 +38,8 @@ Customer.findOne = async () => null;
 Customer.create = async () => ({});
 BlockedPhone.findOne = async () => null;
 Setting.findOne = async () => ({ delivery: { enabled: true } });
+orderNumber.allocateOrderNumber = async () => ({ orderNumber: 'T-1', numberSeries: 'delivery', numberSeq: 1 });
+orderNumber.createOrderWithNumber = async (O, kind, data) => O.create({ ...data, orderNumber: 'T-1', numberSeries: 'delivery', numberSeq: 1 });
 orderNumber.generateUniqueOrderNumber = async () => 'T-1';
 realtime.emitOrderCreated = () => {};
 pushService.notifyNewOrder = async () => {};

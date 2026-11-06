@@ -15,7 +15,8 @@ const printJobSchema = new mongoose.Schema(
     type: {
       type: String,
       // html: ورقة جاهزة من شركة البراق (payload: { title, html }) — تُنشأ من الخادم فقط
-      enum: ['confirm', 'invoice', 'shift', 'drawer', 'expense', 'pos', 'html'],
+      // hall: جولة طلبات طاولة لأقسام المطبخ (payload: الطاولة والأصناف) | hallbill: كشف حساب الطاولة على الرئيسية
+      enum: ['confirm', 'invoice', 'shift', 'drawer', 'expense', 'pos', 'html', 'hall', 'hallbill'],
       required: true,
     },
     // confirm/invoice: الطلب المطلوب طباعته

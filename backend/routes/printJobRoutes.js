@@ -7,6 +7,8 @@ const {
   claimJob,
   finishJob,
   getJob,
+  stationPing,
+  listStations,
 } = require('../controllers/printJobController');
 
 /*
@@ -25,6 +27,9 @@ const canPrint = (req, res, next) => {
 };
 router.post('/', protect, canPrint, createJob);
 router.get('/pending', protect, pendingJobs);
+// محطة الطباعة (جهاز كاشير داخل المطعم): نبضتها، ومن يرسل أمراً يرى إن كانت متصلة
+router.post('/station', protect, authorize('admin', 'manager', 'cashier'), stationPing);
+router.get('/stations', protect, listStations);
 router.post('/:id/claim', protect, claimJob);
 router.patch('/:id', protect, finishJob);
 router.get('/:id', protect, getJob);

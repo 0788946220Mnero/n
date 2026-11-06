@@ -15,9 +15,11 @@ const payDate = (e) => e.spentAt || e.createdAt;
 /** مجاميع صرف موظف (غير الملغى): الكل، هذا الشهر، وحسب النوع. */
 const totalsOf = (rows) => {
   const ms = monthStart();
-  const t = { all: 0, month: 0, salary: 0, advance: 0, bonus: 0, other: 0, count: rows.length };
+  // open: منذ آخر تصفية (ما لم يدخل «تصفية موظف» بعد) — يعود صفراً بعد كل تصفية
+  const t = { all: 0, month: 0, open: 0, openSalary: 0, openAdvance: 0, salary: 0, advance: 0, bonus: 0, other: 0, count: rows.length };
   rows.forEach((e) => {
     t.all += e.amount;
+    if (!e.settlement) { t.open += e.amount; if (e.kind === 'salary') t.openSalary += e.amount; if (e.kind === 'advance') t.openAdvance += e.amount; }
     if (new Date(payDate(e)) >= ms) t.month += e.amount;
     t[e.kind] = (t[e.kind] || 0) + e.amount;
   });
@@ -28,8 +30,8 @@ const totalsOf = (rows) => {
 // GET /api/employees?active=1 — الموظفون مع مجاميع صرفهم
 const listEmployees = async (req, res) => {
   const f = req.query.active === '0' ? { active: false } : req.query.active === 'all' ? {} : { active: true };
-  const emps = await Employee.find(f).sort({ name: 1 }).lean();
-  const pays = await Expense.find({ employee: { $in: emps.map((e) => e._id) }, voided: { $ne: true } }).select('employee amount kind spentAt createdAt').lean();
+  const emps = (await Employee.find(f).select('+pinHash').sort({ name: 1 }).lean()).map(({ pinHash, ...e }) => ({ ...e, hasPin: !!pinHash, pinLocked: !!(e.pinLockedUntil && e.pinLockedUntil > new Date()) }));
+  const pays = await Expense.find({ employee: { $in: emps.map((e) => e._id) }, voided: { $ne: true } }).select('employee amount kind spentAt createdAt settlement').lean();
   const byEmp = new Map();
   pays.forEach((p) => { const k = String(p.employee); if (!byEmp.has(k)) byEmp.set(k, []); byEmp.get(k).push(p); });
   res.json({ success: true, data: emps.map((e) => ({ ...e, totals: totalsOf(byEmp.get(String(e._id)) || []) })) });
@@ -44,6 +46,9 @@ const pick = (b) => {
   if (b.notes !== undefined) o.notes = String(b.notes).trim().slice(0, 300);
   if (b.startDate !== undefined) o.startDate = b.startDate ? new Date(b.startDate) : null;
   if (b.active !== undefined) o.active = !!b.active;
+  if (b.section !== undefined) o.section = String(b.section).trim().slice(0, 40);
+  if (b.shiftStart !== undefined) o.shiftStart = /^([01]\d|2[0-3]):[0-5]\d$/.test(String(b.shiftStart)) ? String(b.shiftStart) : '';
+  if (b.shiftHours !== undefined) o.shiftHours = Math.min(24, Math.max(0, Number(b.shiftHours) || 0));
   return o;
 };
 
@@ -76,7 +81,7 @@ const employeePayments = async (req, res) => {
   const [data, total, live] = await Promise.all([
     Expense.find(f).select('-approvedSignature').sort({ spentAt: -1, createdAt: -1 }).skip((page - 1) * limit).limit(limit).lean(),
     Expense.countDocuments(f),
-    Expense.find({ ...f, voided: { $ne: true } }).select('amount kind spentAt createdAt').lean(),
+    Expense.find({ ...f, voided: { $ne: true } }).select('amount kind spentAt createdAt settlement').lean(),
   ]);
   res.json({ success: true, employee: emp, totals: totalsOf(live), data, pagination: { page, limit, total, pages: Math.ceil(total / limit) } });
 };
