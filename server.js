@@ -69,7 +69,7 @@ const corsOptions = {
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'x-print-token', 'x-kiosk-token'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'x-print-token', 'x-kiosk-token', 'x-store-key'],
   maxAge: 86400, // تخزين نتيجة preflight يوماً كاملاً — أسرع للموقع
 };
 
@@ -164,6 +164,7 @@ app.get('/api/health', async (req, res) => {
 
 // ------- شركة البراق للتوصيل: وحدة مستقلة على نفس الخادم (/api/brq + بث /brq/ws) -------
 require('./alburaq').mount(app, { realtime: require('./services/realtimeService') });
+app.use('/api/mkt', require('./marketplace').router()); // منصة براق: تطبيق الزبائن متعدد المتاجر (كل متجر على خادمه)
 
 // ------- معالجة الأخطاء -------
 app.use(notFound);
@@ -196,6 +197,7 @@ server.listen(PORT, () => {
   try { require('./services/orderNumberMigration').start(); } catch (e) { console.error('order number migration:', e.message); } // أرقام الفواتير الدورية: إزالة الفهرس الفريد القديم
   try { require('./services/permissionMigrations').start(); } catch (e) { console.error('permissions migration:', e.message); } // المبيعات وإغلاق الجرد لمدير النظام: مرة واحدة
   try { require('./controllers/supportController').startRetention(); } catch (e) { console.error('support retention:', e.message); } // رسائل الزبائن: مدة الاحتفاظ (اختيارية)
+  try { require('./marketplace').start(); } catch (e) { console.error('marketplace sync:', e.message); } // منصة براق: مزامنة منتجات المتاجر دورياً
   try { require('./services/obligationService').start(); } catch (e) { console.error('obligations:', e.message); } // الالتزامات الثابتة: الإغلاق والتصدير وتنبيه الأيام الفائتة
 });
 

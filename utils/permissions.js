@@ -61,6 +61,8 @@ const PERMISSIONS = [
   { key: 'brq:chat', label: 'شركة البراق: الدردشة مع السائقين والمتاجر' },
   { key: 'brq:monitor', label: 'شركة البراق: الإشراف على كل المحادثات الخاصة بين السائقين والمتاجر' },
   { key: 'brq:request', label: 'طلب سائق البراق من «حالة الطلبات» في المطعم' },
+  // ═══ منصة براق (تطبيق الزبائن متعدد المتاجر) ═══
+  { key: 'mkt:manage', label: 'منصة براق: إضافة المتاجر بعنوان خوادمها، المزامنة، الطلبات والتقييمات والمحادثات' },
   // ═══ الصالة (طلبات الطاولات من التابلت والجوال) ═══
   { key: 'hall:use', label: 'الصالة: فتح الطاولات، إرسال الطلبات للمطبخ، وطلب الحساب' },
   { key: 'hall:manage', label: 'الصالة: إعداد الطاولات، إلغاء صنف، نقل طاولة، وقبض الحساب وإغلاقه' },
@@ -88,7 +90,7 @@ const PERSONAL_KEYS = PERMISSIONS.filter((p) => p.personal).map((p) => p.key);
 // المبيعات وإغلاق الجرد: لمدير النظام وحده افتراضياً (ومراقب البيانات بدوره)، ويمنحها لغيره صراحةً
 const SALES_KEYS = ['orders:closeShift', 'orders:view', 'stats:view', 'shifts:view'];
 // أقسام شركة البراق: لمدير النظام ودور «موظف شركة البراق» افتراضياً — ويمنحها مدير النظام لمن يريد
-const BRQ_KEYS = ALL_KEYS.filter((k) => k.startsWith('brq:'));
+const BRQ_KEYS = ALL_KEYS.filter((k) => k.startsWith('brq:') || k.startsWith('mkt:'));
 
 const ROLE_PERMISSIONS = {
   admin: [...ALL_KEYS],
@@ -123,7 +125,7 @@ const ROLE_PERMISSIONS = {
   waiter: ['hall:use', 'chat:use'],
   delivery: [], // حساب محاسبي للمندوب — بلا دخول ولا صلاحيات
   // موظف شركة البراق: أقسام التوصيل وحدها (الخريطة، الجرد، الطباعة، الكول سنتر، الدردشة) — بلا أي قسم من المطعم
-  company: ['brq:manage', 'brq:ledger', 'brq:prints', 'brq:center', 'brq:chat'],
+  company: ['brq:manage', 'brq:ledger', 'brq:prints', 'brq:center', 'brq:chat', 'mkt:manage'],
   // مراقب بيانات: يرى المبيعات والإحصائيات والجرد ورأس المال وفواتير الموردين وسحوبات الموظفين — بلا أي تعديل
   observer: ['stats:view', 'orders:view', 'shifts:view', 'capital:view', 'receivables:view', 'employees:view', 'attendance:view', 'expenses:view', 'obligations:view', 'profit:view', 'chat:use', 'chat:calls'],
 };

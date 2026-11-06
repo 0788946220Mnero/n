@@ -15,7 +15,7 @@ const centerAllowed = (req) => {
  */
 const companyAllowed = (req) => {
   const url = String(req.originalUrl || '').split('?')[0];
-  return url.startsWith('/api/auth/') || url === '/api/users/me' || url.startsWith('/api/brq/')
+  return url.startsWith('/api/auth/') || url === '/api/users/me' || url.startsWith('/api/brq/') || url.startsWith('/api/mkt/admin/')
     || /^\/api\/devices(\/|$)/.test(url) || /^\/api\/staff-alerts\/(devices|test)(\/|$)/.test(url);
 };
 
