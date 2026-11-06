@@ -129,7 +129,8 @@ app.use('/api/image-cloud', (req, res, next) => {
 });
 app.use('/api/image-cloud', require('./routes/imageCloudRoutes')); // سحابة الصور الخاصة (ImageStorage داخل DiyarPOS) — مدير النظام
 app.use('/api/loyalty', require('./routes/loyaltyRoutes')); // الولاء: محفظة الزبون، الكاشير، الإدارة، Apple Wallet Web Service
-app.use('/api/offers', require('./routes/offerRoutes')); // العروض الترويجية: روابط بمعاينة تفتح صنفاً أو تصنيفاً بخصم ثابت
+app.use('/api/offers', require('./routes/offerRoutes'));
+app.use('/api/profit', require('./profit/routes')); // إدارة المطعم والربحية: الوصفات والمخزون وقائمة الدخل المفسَّرة // العروض الترويجية: روابط بمعاينة تفتح صنفاً أو تصنيفاً بخصم ثابت
 // صفحة مشاركة العرض: وسوم og لفيسبوك وواتساب (الموقع على Netlify يمرّر /o/* إلى هنا)
 app.get('/o/:code', require('./controllers/offerController').sharePage);
 
@@ -191,6 +192,7 @@ server.listen(PORT, () => {
   try { require('./services/chatService').start(); } catch (e) { console.error('chat:', e.message); } // دردشة الطاقم: مدة الاحتفاظ بالوسائط
   try { require('./services/brandMigration').start(); } catch (e) { console.error('brand migration:', e.message); } // «ديار الأنباط» ← «البراق» في المطبوعات: مرة واحدة
   try { require('./services/attendanceService').start(); } catch (e) { console.error('attendance alerts:', e.message); } // الدوام: تنبيه دوام مفتوح > 11 ساعة واستراحة مفتوحة طويلة
+  try { require('./profit/services/consumption').start(); } catch (e) { console.error('profit consumption:', e.message); } // ترحيل تكلفة المبيعات واستهلاك المخزون كل دقيقة
   try { require('./services/orderNumberMigration').start(); } catch (e) { console.error('order number migration:', e.message); } // أرقام الفواتير الدورية: إزالة الفهرس الفريد القديم
   try { require('./services/permissionMigrations').start(); } catch (e) { console.error('permissions migration:', e.message); } // المبيعات وإغلاق الجرد لمدير النظام: مرة واحدة
   try { require('./controllers/supportController').startRetention(); } catch (e) { console.error('support retention:', e.message); } // رسائل الزبائن: مدة الاحتفاظ (اختيارية)

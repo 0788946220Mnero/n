@@ -68,6 +68,10 @@ const PERMISSIONS = [
   { key: 'attendance:breaks', label: 'الدوام — مسؤول القسم: من على رأس عمله الآن، وتسجيل الاستراحات (البريك) لموظفي قسمه' },
   { key: 'attendance:manage', label: 'الدوام — المدير: أجهزة الحضور ورموز PIN، مراجعة الاستثناءات والصور، تعديل الدوام وإغلاقه، والإعدادات' },
   { key: 'attendance:view', label: 'الدوام: عرض تقارير الساعات والأيام والاستراحات فقط', view: true },
+  // ═══ إدارة المطعم والربحية (التكاليف، الوصفات، المخزون، قائمة الدخل) ═══
+  { key: 'profit:view', label: 'الربحية: لوحة الربح والخسارة، تقارير الأصناف والقنوات، نقطة التعادل والمحاكاة', view: true },
+  { key: 'profit:manage', label: 'الربحية: الوصفات وتكلفة المواد، البنود الموزّعة (إيجار، كهرباء، إهلاك)، أجور الساعة، اعتماد الجرد والإعدادات' },
+  { key: 'inventory:operate', label: 'المخزون: استلام البضاعة، الهدر والتالف، وجبات الموظفين، دفعات التحضير، وإدخال الجرد' },
   // عرض فقط — لمراقب البيانات (ويُمنح لغيره): يرى ولا يعدّل
   { key: 'capital:view', label: 'رأس المال: عرض الرصيد والحركات فقط (بلا إيداع ولا سحب)', view: true },
   { key: 'receivables:view', label: 'ذمم الموردين: عرض الفواتير المخزّنة وصورها فقط', view: true },
@@ -92,7 +96,7 @@ const ROLE_PERMISSIONS = {
   // رأس المال وصرف الموظفين: لمدير النظام افتراضياً، ويُمنحان لغيره من «المستخدمون»
   // والأوامر الصوتية: لمدير النظام افتراضياً، ويمنحها لمن يريد
   // المبيعات وإغلاق الجرد: لمدير النظام وحده افتراضياً، ويمنحها لمن يريد
-  manager: ALL_KEYS.filter((k) => !['users:manage', 'capital:manage', 'capital:view', 'employees:pay', 'voice:commands', 'stats:live', 'images:cloud', 'staff:notify', 'obligations:manage', 'chat:monitor', ...SALES_KEYS, ...BRQ_KEYS.filter((b) => b !== 'brq:request')].includes(k)),
+  manager: ALL_KEYS.filter((k) => !['users:manage', 'capital:manage', 'capital:view', 'employees:pay', 'voice:commands', 'stats:live', 'images:cloud', 'staff:notify', 'obligations:manage', 'chat:monitor', 'profit:view', 'profit:manage', ...SALES_KEYS, ...BRQ_KEYS.filter((b) => b !== 'brq:request')].includes(k)),
   cashier: [
     'orders:manage', // يعمل على «حالة الطلبات» ويبيع — بلا سجل مبيعات ولا إغلاق جرد
     'brq:request', // يطلب سائق البراق لطلب توصيل من «حالة الطلبات»
@@ -121,7 +125,7 @@ const ROLE_PERMISSIONS = {
   // موظف شركة البراق: أقسام التوصيل وحدها (الخريطة، الجرد، الطباعة، الكول سنتر، الدردشة) — بلا أي قسم من المطعم
   company: ['brq:manage', 'brq:ledger', 'brq:prints', 'brq:center', 'brq:chat'],
   // مراقب بيانات: يرى المبيعات والإحصائيات والجرد ورأس المال وفواتير الموردين وسحوبات الموظفين — بلا أي تعديل
-  observer: ['stats:view', 'orders:view', 'shifts:view', 'capital:view', 'receivables:view', 'employees:view', 'attendance:view', 'expenses:view', 'obligations:view', 'chat:use', 'chat:calls'],
+  observer: ['stats:view', 'orders:view', 'shifts:view', 'capital:view', 'receivables:view', 'employees:view', 'attendance:view', 'expenses:view', 'obligations:view', 'profit:view', 'chat:use', 'chat:calls'],
 };
 
 // هل يستخدم المستخدم صلاحيات مخصّصة أم يرث صلاحيات دوره؟

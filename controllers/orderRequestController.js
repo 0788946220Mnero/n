@@ -167,6 +167,7 @@ const resolveRequest = async (req, res) => {
       const itemsTotal = round3(items.reduce((t, i) => t + Number(i.price || 0) * Number(i.quantity || 1), 0));
       set.items = items;
       set.itemsTotal = itemsTotal;
+      set.costPosted = false; // الأصناف المضافة تُرحَّل تكلفتها (الأسطر القديمة مرحّلة بمفاتيحها فلا تتكرر)
       let deliveryFee = Number(order.deliveryFee || 0);
       if (order.orderType === 'delivery' && order.source !== 'pos') {
         try {

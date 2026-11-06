@@ -31,6 +31,8 @@ const settingSchema = new mongoose.Schema(
     workHoursNote: { type: String, default: '' },
 
     phones: [{ type: String }],
+    // «رقم هاتف المطعم للطباعة» — يظهر أسفل قسائم الأقسام بجانب رمز QR. فارغ = لا يُطبع رقم
+    printPhone: { type: String, default: '' },
     whatsapp: { type: String, default: '' }, // واتساب الطلبات العام
     complaintsWhatsapp: { type: String, default: '' }, // واتساب الشكاوى والاقتراحات (مدير المطعم)
     mapUrl: { type: String, default: '' }, // رابط خريطة المطعم على Google Maps

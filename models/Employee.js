@@ -6,7 +6,8 @@ const employeeSchema = new mongoose.Schema(
     name: { type: String, required: true, trim: true, maxlength: 80 },
     phone: { type: String, default: '', trim: true, maxlength: 20 },
     jobTitle: { type: String, default: '', trim: true, maxlength: 60 },   // طبّاخ، كاشير، عامل نظافة…
-    salary: { type: Number, default: 0, min: 0 },                        // الراتب الشهري (اختياري)
+    salary: { type: Number, default: 0, min: 0 },
+    hourlyRate: { type: Number, default: null, min: 0 },                // أجر الساعة (اختياري) — وإلا يُشتق من الراتب الشهري لحساب تكلفة العمالة                        // الراتب الشهري (اختياري)
     startDate: { type: Date, default: null },
     notes: { type: String, default: '', maxlength: 300 },
     active: { type: Boolean, default: true, index: true },
