@@ -1,0 +1,214 @@
+require('dotenv').config();
+const express = require('express');
+const cors = require('cors');
+const helmet = require('helmet');
+const mongoSanitize = require('express-mongo-sanitize');
+const xss = require('xss-clean');
+
+const connectDB = require('./config/db');
+const { notFound, errorHandler } = require('./middlewares/errorHandler');
+
+// اتصال قاعدة البيانات
+connectDB();
+
+const app = express();
+app.set('trust proxy', 2); // Railway خلف بروكسي — ضروري لقراءة IP الحقيقي
+
+// ------- الأمان -------
+// ملاحظة: هذا خادم API فقط (لا يخدم صفحات HTML)، لذلك:
+//  • نعطّل CSP لأنه لا معنى له هنا وقد يعيق ردود JSON/الشهادة
+//  • نجعل Cross-Origin-Resource-Policy = cross-origin حتى تستطيع المواقع
+//    على نطاقات أخرى (diyaralanbat.com و netlify) قراءة موارد الخادم
+app.use(
+  helmet({
+    contentSecurityPolicy: false,
+    crossOriginResourcePolicy: { policy: 'cross-origin' },
+    crossOriginEmbedderPolicy: false,
+  })
+);
+app.use(mongoSanitize()); // حماية ضد NoSQL Injection
+app.use(xss()); // حماية ضد XSS
+
+// ═══════════════════════ إعداد CORS ═══════════════════════
+// النطاقات المسموحة = القائمة الثابتة أدناه + أي نطاق يُضاف في متغيّر البيئة
+// CLIENT_URL (مفصولة بفواصل) + أي نطاق فرعي على netlify.app + localhost للتطوير.
+//
+// مهم: النطاق الأساسي والنسخة بـ www يُعدّان نطاقين مختلفين عند المتصفح،
+// لذلك كلاهما مُدرج صراحةً.
+const DEFAULT_ORIGINS = [
+  'https://diyaralanbat.com',
+  'https://www.diyaralanbat.com',
+  'https://diyaralanbat.netlify.app',
+  'https://diyaradmin.netlify.app',
+];
+
+const envOrigins = (process.env.CLIENT_URL || '')
+  .split(',')
+  .map((o) => o.trim().replace(/\/+$/, ''))
+  .filter(Boolean);
+
+const allowedOrigins = [...new Set([...DEFAULT_ORIGINS, ...envOrigins])];
+
+const isAllowedOrigin = (origin) => {
+  const clean = String(origin).replace(/\/+$/, '');
+  return (
+    allowedOrigins.includes(clean) ||
+    /^https:\/\/([a-z0-9-]+\.)*netlify\.app$/i.test(clean) ||
+    /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(clean) ||
+    /^capacitor:\/\//i.test(clean) // تطبيق الإدارة (WebView)
+  );
+};
+
+const corsOptions = {
+  origin(origin, callback) {
+    // طلبات بلا Origin: أدوات الخادم، برنامج الطابعة المحلي، تطبيق Flutter — مسموحة
+    if (!origin) return callback(null, true);
+    if (isAllowedOrigin(origin)) return callback(null, true);
+    console.warn(`⛔ CORS: طلب مرفوض من النطاق ${origin}`);
+    return callback(new Error(`النطاق غير مسموح: ${origin}`));
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'x-print-token', 'x-kiosk-token', 'x-store-key'],
+  maxAge: 86400, // تخزين نتيجة preflight يوماً كاملاً — أسرع للموقع
+};
+
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions)); // الرد على طلبات preflight
+
+// ------- تحليل البيانات -------
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+// ------- الصور والوسائط تُخزَّن على Cloudinary (لا مجلد uploads محلي) -------
+
+// ------- المسارات (Routes) -------
+// مصادقة الزبائن بالهاتف (OTP) — تُركَّب قبل راوتر الأدمن؛ توكنات الأدمن تمرّ خلالها بأمان
+app.use('/api/auth', require('./routes/phoneAuthRoutes'));
+app.use('/api/auth', require('./routes/authRoutes'));
+app.use('/api/categories', require('./routes/categoryRoutes'));
+app.use('/api/products', require('./routes/productRoutes'));
+app.use('/api/orders', require('./routes/orderRoutes'));
+app.use('/api/customers', require('./routes/customerRoutes'));
+app.use('/api/settings', require('./routes/settingRoutes'));
+app.use('/api/printers', require('./routes/printerRoutes')); // إدارة الطابعات وتوجيه التصنيفات
+app.use('/api/print', require('./routes/printSignRoutes')); // شهادة QZ Tray وتوقيع طلبات الطباعة
+app.use('/api/users', require('./routes/userRoutes')); // إدارة مستخدمي الإدارة (تطبيق الإدارة)
+app.use('/api/devices', require('./routes/deviceRoutes'));
+app.use('/api/expenses', require('./routes/expenseRoutes')); // المصروفات — تدخل جرد من سجّلها
+app.use('/api/print-jobs', require('./routes/printJobRoutes')); // الطباعة عن بُعد على جهاز الكاشير
+app.use('/api/notifications', require('./routes/notificationRoutes')); // إشعارات الزبائن (عروض ومناسبات) // تسجيل أجهزة الإشعارات (FCM)
+app.use('/api/stats', require('./routes/statsRoutes')); // الإحصائيات الحقيقية بالتجميع
+app.use('/api/activity', require('./routes/activityRoutes')); // سجل نشاط المستخدمين
+app.use('/api/shifts', require('./routes/shiftRoutes')); // دورات الجرد: فتح وسجل
+app.use('/api/delivery', require('./routes/deliveryRoutes')); // خريطة التوصيل وسجله وموظفوه
+app.use('/api/receivables', require('./routes/receivableRoutes')); // الذمم
+app.use('/api/supplies', require('./routes/supplyRoutes')); // قائمة البضائع المطلوبة
+app.use('/api/capital', require('./routes/capitalRoutes')); // رأس المال
+app.use('/api/employees', require('./routes/employeeRoutes')); // الموظفون وصرفهم
+app.use('/api/center', require('./routes/centerRoutes'));
+app.use('/api/hall', require('./routes/hallRoutes')); // الصالة: الطاولات والطلبات من التابلت والجوال، والقبض عند الكاشير // بيع سنتر: طلبات هاتفية + سجل الزبون + مراقبة الموظفين
+app.use('/api/pos-devices', require('./routes/posDeviceRoutes')); // رمز إعدادات أجهزة الكاشير (DiyarPOS) — يعيّنه مدير النظام
+app.use('/api/attendance', require('./routes/attendanceRoutes')); // الدوام: جهاز الحضور (PIN + صورة + شبكة المطعم)، البريك من مسؤول القسم، الاستثناءات والتقارير
+app.use('/api/live-report', require('./routes/liveReportRoutes')); // التقرير الحي على شاشة القفل (Web Push)
+app.use('/api/staff-alerts', require('./routes/staffAlertRoutes')); // إشعارات الطاقم: من مدير النظام وحركات المطعم لأجهزة الموظفين
+app.use('/api/obligations', require('./routes/obligationRoutes'));
+app.use('/api/chat', require('./routes/chatRoutes')); // دردشة الطاقم: رسائل وصوت وصور ومكالمات (الإشارات عبر /ws) // الالتزامات الثابتة: تقسيط يومي حتى موعد السداد ثم ذمم الموردين
+app.use('/api/support', require('./routes/supportRoutes')); // «تواصل مع فريق العمل»: دردشة الزبائن مع الطاقم
+app.use('/api/community', require('./routes/communityRoutes')); // «الدردشة العامة» لزبائن المنصة + إشراف فريق العمل
+app.use('/api/relay', require('./routes/relayRoutes')); // الرسول: أوامر المدير من هاتفه لجهاز الكاشير
+// IMAGE-SERVER: سجل تشخيص لطلبات سحابة الصور — الطريقة والمسار والرمز والمدة فقط (لا query ولا رؤوس ولا أجسام).
+// عرض الصور الناجح للزبائن لا يُسجَّل (كثير ولا يفيد)؛ كل فشل يُسجَّل.
+app.use('/api/image-cloud', (req, res, next) => {
+  const t0 = Date.now(); const p = req.path;
+  res.on('finish', () => {
+    const okMedia = (p.startsWith('/relay/media/') || p.startsWith('/relay/peer/')) && res.statusCode < 400;
+    if (!okMedia) console.log(`[image-cloud] ${req.method} ${p} -> ${res.statusCode} (${Date.now() - t0}ms)`);
+  });
+  next();
+});
+app.use('/api/image-cloud', require('./routes/imageCloudRoutes')); // سحابة الصور الخاصة (ImageStorage داخل DiyarPOS) — مدير النظام
+app.use('/api/loyalty', require('./routes/loyaltyRoutes')); // الولاء: محفظة الزبون، الكاشير، الإدارة، Apple Wallet Web Service
+app.use('/api/offers', require('./routes/offerRoutes'));
+app.use('/api/profit', require('./profit/routes')); // إدارة المطعم والربحية: الوصفات والمخزون وقائمة الدخل المفسَّرة // العروض الترويجية: روابط بمعاينة تفتح صنفاً أو تصنيفاً بخصم ثابت
+// صفحة مشاركة العرض: وسوم og لفيسبوك وواتساب (الموقع على Netlify يمرّر /o/* إلى هنا)
+app.get('/o/:code', require('./controllers/offerController').sharePage);
+
+// فحص صحة الخادم — يفيد أيضاً لاختبار CORS من المتصفح
+// RAILWAY / DUAL-CONNECTION: «الخادم يرد» لا يعني أن قاعدة البيانات تعمل — db تفحصها فعلاً (ping بمهلة ثانيتين).
+// الرد دائماً 200 (فحص Railway الصحي لا يعيد تشغيل الخادم بسبب انقطاع مؤقت في القاعدة)، و status يقول الحقيقة.
+const mongoose = require('mongoose');
+async function dbHealth() {
+  const t0 = Date.now();
+  if (mongoose.connection.readyState !== 1) return { state: 'down', message: 'غير متصل بقاعدة البيانات' };
+  try {
+    await Promise.race([
+      mongoose.connection.db.admin().ping(),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('مهلة')), 2000)),
+    ]);
+    return { state: 'up', ms: Date.now() - t0 };
+  } catch (e) { return { state: 'down', message: `قاعدة البيانات لا ترد (${e.message})` }; }
+}
+
+app.get('/api/health', async (req, res) => {
+  const db = await dbHealth();
+  res.json({
+    status: db.state === 'up' ? 'ok' : 'degraded',
+    db,
+    message: db.state === 'up' ? 'الخادم يعمل بنجاح' : 'الخادم يعمل لكن قاعدة البيانات لا ترد',
+    origin: req.headers.origin || null,
+    allowedOrigins,
+    time: new Date().toISOString(),
+  });
+});
+
+// ------- شركة البراق للتوصيل: وحدة مستقلة على نفس الخادم (/api/brq + بث /brq/ws) -------
+require('./alburaq').mount(app, { realtime: require('./services/realtimeService') });
+app.use('/api/mkt', require('./marketplace').router()); // منصة براق: تطبيق الزبائن متعدد المتاجر (كل متجر على خادمه)
+// ديون الشركة والمؤسسون: واجهة المؤسسين المستقلة (/api/founders + بث /founders/ws) وأقسام اللوحة
+require('./founders').mount(app, { realtime: require('./services/realtimeService') });
+
+// ------- معالجة الأخطاء -------
+app.use(notFound);
+app.use(errorHandler);
+
+const PORT = process.env.PORT || 5000;
+const http = require('http');
+const server = http.createServer(app);
+
+// خدمة الوقت الحقيقي — تشارك نفس منفذ الخادم
+const realtime = require('./services/realtimeService');
+realtime.init(server);
+// زبائن المنصة: ردود فريق العمل والدردشة العامة لحظياً على /ws/customer
+try { require('./services/customerRealtime').start(); } catch (e) { console.error('customer realtime:', e.message); }
+// نفق الصور: أجهزة DiyarPOS تتصل بنفسها هنا وتُعرض صورها عبر هذا الخادم (بلا Cloudflare)
+const imageRelay = require('./services/imageRelayService');
+realtime.onUpgrade(imageRelay.WS_PATH, imageRelay.handleUpgrade);
+// الولاء: تحديث بطاقات Apple/Google في الخلفية عند تغيّر أي رصيد
+require('./services/walletSync').start();
+
+server.listen(PORT, () => {
+  console.log(`🚀 الخادم يعمل على المنفذ ${PORT}`);
+  console.log(`🌐 النطاقات المسموحة: ${allowedOrigins.join(' | ')}`);
+  // التقرير الحي: تحديث دوري أثناء الدوام (كل 15 دقيقة افتراضياً)
+  try { require('./services/liveReportService').start(); } catch (e) { console.error('liveReport:', e.message); }
+  try { require('./services/chatService').start(); } catch (e) { console.error('chat:', e.message); } // دردشة الطاقم: مدة الاحتفاظ بالوسائط
+  try { require('./services/brandMigration').start(); } catch (e) { console.error('brand migration:', e.message); } // «ديار الأنباط» ← «البراق» في المطبوعات: مرة واحدة
+  try { require('./services/attendanceService').start(); } catch (e) { console.error('attendance alerts:', e.message); } // الدوام: تنبيه دوام مفتوح > 11 ساعة واستراحة مفتوحة طويلة
+  try { require('./profit/services/consumption').start(); } catch (e) { console.error('profit consumption:', e.message); } // ترحيل تكلفة المبيعات واستهلاك المخزون كل دقيقة
+  try { require('./services/orderNumberMigration').start(); } catch (e) { console.error('order number migration:', e.message); } // أرقام الفواتير الدورية: إزالة الفهرس الفريد القديم
+  try { require('./services/permissionMigrations').start(); } catch (e) { console.error('permissions migration:', e.message); } // المبيعات وإغلاق الجرد لمدير النظام: مرة واحدة
+  try { require('./controllers/supportController').startRetention(); } catch (e) { console.error('support retention:', e.message); } // رسائل الزبائن: مدة الاحتفاظ (اختيارية)
+  try { require('./marketplace').start(); } catch (e) { console.error('marketplace sync:', e.message); } // منصة براق: مزامنة منتجات المتاجر دورياً
+  try { require('./services/obligationService').start(); } catch (e) { console.error('obligations:', e.message); } // الالتزامات الثابتة: الإغلاق والتصدير وتنبيه الأيام الفائتة
+});
+
+// ------- شبكة أمان: لا نسمح لخطأ غير متوقّع بإسقاط الخادم صامتاً -------
+process.on('unhandledRejection', (err) => {
+  console.error('❌ رفض غير معالَج:', err && err.message ? err.message : err);
+});
+process.on('uncaughtException', (err) => {
+  console.error('❌ استثناء غير ملتقَط:', err && err.stack ? err.stack : err);
+});
+
+module.exports = app;
